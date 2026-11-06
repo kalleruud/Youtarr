@@ -3,6 +3,8 @@ const createAuthRoutes = require('./auth');
 const createSetupRoutes = require('./setup');
 const createConfigRoutes = require('./config');
 const createChannelRoutes = require('./channels');
+const createChannelArtworkRoutes = require('./channelArtwork');
+const channelArtworkModule = require('../modules/channelArtworkModule');
 const createVideoRoutes = require('./videos');
 const createJobRoutes = require('./jobs');
 const createPlexRoutes = require('./plex');
@@ -64,6 +66,7 @@ function registerRoutes(app, deps) {
     ytdlpValidationRateLimiter,
     filenamePreviewRateLimiter,
     cookieTestRateLimiter,
+    artworkUploadRateLimiter,
     configModule,
     channelModule,
     plexModule,
@@ -101,6 +104,9 @@ function registerRoutes(app, deps) {
 
   // Channel routes
   app.use(createChannelRoutes({ verifyToken, channelModule, archiveModule, channelDownloadAllModule, ratingMapper, storageGuard }));
+
+  // Channel show poster routes (upload/select/pin/reset/regenerate, Jellyfin artwork refresh)
+  app.use(createChannelArtworkRoutes({ verifyToken, channelArtworkModule, artworkUploadRateLimiter }));
 
   // Video routes
   app.use(createVideoRoutes({

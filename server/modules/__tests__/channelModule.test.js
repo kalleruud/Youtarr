@@ -24,6 +24,7 @@ jest.mock('../../db', () => mockFactories.mockDb());
 jest.mock('../acquisition/channelSweepPlanner', () => ({ loadChannelSweepPlan: jest.fn() }));
 jest.mock('../filesystem', () => mockFactories.mockFilesystem());
 jest.mock('../fileCheckModule', () => mockFactories.mockFileCheckModule());
+jest.mock('../channelArtworkModule', () => ({ isEnabled: jest.fn(() => false), syncChannel: jest.fn() }));
 jest.mock('../m3uGenerator', () => ({
   generateChannelM3UInBackground: jest.fn(),
   deleteChannelM3UInBackground: jest.fn(),

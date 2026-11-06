@@ -28,7 +28,7 @@ import {
   Tabs,
   Chip,
 } from '../ui';
-import { CheckCircle as CheckCircleIcon, XCircle as CancelIcon, Info as InfoIcon, Copy as ContentCopyIcon, Settings as SettingsIcon, Download as DownloadIcon, Filter as FilterAltIcon, Shield as RatingIcon, Tag as TagIcon, ShieldCheck as AutoRemovalIcon } from '../../lib/icons';
+import { CheckCircle as CheckCircleIcon, XCircle as CancelIcon, Info as InfoIcon, Copy as ContentCopyIcon, Settings as SettingsIcon, Download as DownloadIcon, Filter as FilterAltIcon, Shield as RatingIcon, Tag as TagIcon, ShieldCheck as AutoRemovalIcon, Image as ArtworkIcon } from '../../lib/icons';
 import useMediaQuery from '../../hooks/useMediaQuery';
 import { useConfig } from '../../hooks/useConfig';
 import { useSubfolders } from '../../hooks/useSubfolders';
@@ -39,6 +39,7 @@ import { RatingSelect } from '../shared/RatingSelect';
 import { RATING_OPTIONS } from '../../utils/ratings';
 import RatingBadge from '../shared/RatingBadge';
 import TabsEditor, { TabsEditorRefreshResult } from './components/TabsEditor';
+import ChannelArtworkSection from './components/ChannelArtworkSection';
 
 const M3U_SORT_ORDERS = ['oldest_first', 'newest_first'] as const;
 type M3uSortOrder = (typeof M3U_SORT_ORDERS)[number];
@@ -201,7 +202,8 @@ function ChannelSettingsDialog({
     { id: 'filters', label: 'Filters', icon: <FilterAltIcon size={18} /> },
     { id: 'ratings', label: 'Ratings', icon: <RatingIcon size={18} /> },
     { id: 'tags', label: 'Tags', icon: <TagIcon size={18} /> },
-    { id: 'autoremoval', label: 'Auto-Removal', icon: <AutoRemovalIcon size={18} /> }
+    { id: 'autoremoval', label: 'Auto-Removal', icon: <AutoRemovalIcon size={18} /> },
+    { id: 'artwork', label: 'Artwork', icon: <ArtworkIcon size={18} /> }
   ];
 
   useEffect(() => {
@@ -1031,6 +1033,8 @@ function ChannelSettingsDialog({
             />
           </div>
         );
+      case 'artwork':
+        return <ChannelArtworkSection channelId={channelId} token={token} />;
       default:
         return null;
     }

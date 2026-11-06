@@ -640,6 +640,25 @@ const initialize = async () => {
       },
     });
 
+    // Rate limiter for channel poster uploads and regeneration: each request
+    // runs ffprobe/ffmpeg over an image.
+    const artworkUploadRateLimiter = rateLimit({
+      windowMs: 1 * 60 * 1000,
+      max: 20,
+      standardHeaders: true,
+      legacyHeaders: false,
+      validate: {
+        trustProxy: false,
+        ip: false,
+      },
+      keyGenerator: (req) => getRateLimitAddress(req),
+      handler: (_req, res) => {
+        res.status(429).json({
+          error: 'Too many artwork requests. Please wait a minute before trying again.',
+        });
+      },
+    });
+
     // Rate limiter for /api/cookies/test. Each test spawns yt-dlp and makes a
     // signed-in request to YouTube; repeated tests could draw a bot check.
     const cookieTestRateLimiter = rateLimit({
@@ -717,6 +736,7 @@ const initialize = async () => {
       ytdlpValidationRateLimiter,
       filenamePreviewRateLimiter,
       cookieTestRateLimiter,
+      artworkUploadRateLimiter,
       configModule,
       channelModule,
       plexModule,
