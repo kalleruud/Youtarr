@@ -12,6 +12,7 @@ const { detectImageType, probeImage, sha256File } = require('./artwork/imageInsp
 const { composePoster, normalizeUpload } = require('./artwork/posterComposer');
 const { resolveShowArtwork } = require('./artwork/showArtwork');
 const { prepareEpisodeArtwork, publishEpisodeArtwork } = require('./artwork/episodeArtwork');
+const { findShowFolderName } = require('./tvPublication/tvPublisher');
 const {
   UPLOAD_MIN_WIDTH,
   UPLOAD_MIN_HEIGHT,
@@ -25,6 +26,7 @@ const {
 
 const MAX_MESSAGE_LENGTH = 500;
 const AUDIO_ONLY_EXTENSION = /\.mp3$/i;
+const TV_PROFILE = 'jellyfinTv';
 
 class ArtworkValidationError extends Error {
   constructor(message) {
@@ -86,14 +88,24 @@ class ChannelArtworkModule {
     return Channel.findOne({ where: { channel_id: channelId } });
   }
 
-  /** The channel's folder in the library, or null when it cannot be resolved. */
-  resolveChannelFolder(channel) {
+  /**
+   * The channel's folder in the library, or null when it cannot be resolved.
+   * With the Jellyfin TV output profile, the channel's "<Show> [<channel id>]"
+   * folder is where its episodes and poster belong, so an existing one wins
+   * over the regular channel folder.
+   */
+  async resolveChannelFolder(channel) {
     const outputDir = configModule.directoryPath;
-    const folderName = channel && resolveChannelFolderName(channel);
-    if (!outputDir || !folderName) return null;
+    if (!outputDir || !channel) return null;
     try {
       const subfolder = resolveEffectiveSubfolder(channel.sub_folder, configModule.getDefaultSubfolder());
-      return buildChannelPath(outputDir, subfolder, folderName);
+      if ((configModule.getConfig() || {}).libraryOutputProfile === TV_PROFILE && channel.channel_id) {
+        const parentDir = subfolder ? path.dirname(buildChannelPath(outputDir, subfolder, '_')) : outputDir;
+        const showFolder = await findShowFolderName(parentDir, channel.channel_id);
+        if (showFolder) return path.join(parentDir, showFolder);
+      }
+      const folderName = resolveChannelFolderName(channel);
+      return folderName ? buildChannelPath(outputDir, subfolder, folderName) : null;
     } catch (err) {
       logger.warn({ err, channelId: channel.channel_id }, 'Could not resolve channel folder for artwork');
       return null;
@@ -199,7 +211,7 @@ class ChannelArtworkModule {
     await this.resolvePoster(channelId, { force });
     const record = await this.getRecord(channelId);
     const cachePath = this.posterCachePath(channelId);
-    const folder = folderPath || this.resolveChannelFolder(await this.findChannel(channelId));
+    const folder = folderPath || await this.resolveChannelFolder(await this.findChannel(channelId));
     if (!folder || !fs.existsSync(folder) || !fs.existsSync(cachePath)) {
       return { published: false, note: null };
     }
@@ -228,7 +240,7 @@ class ChannelArtworkModule {
   /** Ask Jellyfin to re-read this channel's images; the outcome is stored for display and retry. */
   async requestRefresh(channelId, folderPath = null) {
     const record = await this.getRecord(channelId);
-    const folder = folderPath || this.resolveChannelFolder(await this.findChannel(channelId));
+    const folder = folderPath || await this.resolveChannelFolder(await this.findChannel(channelId));
     const adapters = serverRegistry.getEnabledAdapters(configModule.getConfig() || {})
       .filter((adapter) => typeof adapter.refreshFolderImages === 'function');
     let result;

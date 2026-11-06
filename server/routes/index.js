@@ -14,6 +14,7 @@ const createVideoDetailRoutes = require('./videoDetail');
 const episodeAssignment = require('../modules/episodeAssignment');
 const createAcquisitionPolicyRoutes = require('./acquisitionPolicy');
 const acquisitionPolicyService = require('../modules/acquisition/acquisitionPolicyService');
+const tvPublication = require('../modules/tvPublication');
 const createVideoSearchRoutes = require('./videoSearch');
 const createChannelSearchRoutes = require('./channelSearch');
 const createPlaylistRoutes = require('./playlists');
@@ -142,7 +143,7 @@ function registerRoutes(app, deps) {
   app.use(createSubscriptionRoutes({ verifyToken, subscriptionImportModule }));
 
   // Video detail routes (metadata and streaming)
-  app.use(createVideoDetailRoutes({ verifyToken, videoMetadataModule, mediaServers, episodeAssignment }));
+  app.use(createVideoDetailRoutes({ verifyToken, videoMetadataModule, mediaServers, episodeAssignment, tvPublication }));
 
   // Acquisition policy routes (stream/download and livestream policies)
   app.use(createAcquisitionPolicyRoutes({ verifyToken, acquisitionPolicyService }));

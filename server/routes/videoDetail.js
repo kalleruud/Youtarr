@@ -22,8 +22,62 @@ const metadataLimiter = rateLimit({
  * @param {Object} deps.mediaServers - Media server aggregate (watchStatusQueries)
  * @returns {express.Router}
  */
-function createVideoDetailRoutes({ verifyToken, videoMetadataModule, mediaServers, episodeAssignment }) {
+function createVideoDetailRoutes({ verifyToken, videoMetadataModule, mediaServers, episodeAssignment, tvPublication }) {
   const router = express.Router();
+
+  const TV_REGENERATE_STATUS = {
+    'not-found': 404,
+    'not-published': 409,
+    'layout-mismatch': 409,
+    'missing-media': 409,
+    'metadata-missing': 409,
+    'date-required': 409,
+  };
+
+  /**
+   * @swagger
+   * /api/videos/{youtubeId}/tv-metadata/regenerate:
+   *   post:
+   *     summary: Rewrite the TV show, season and episode NFOs of a published episode
+   *     description: |
+   *       Rebuilds tvshow.nfo, season.nfo and the episode NFO from the cached
+   *       .info.json and the stored episode assignment. The media file,
+   *       subtitles and thumbnail stay in place and nothing is downloaded.
+   *       Only videos already stored in the Jellyfin TV layout qualify; moving
+   *       existing downloads into that layout is a separate migration.
+   *     tags: [Videos]
+   *     parameters:
+   *       - in: path
+   *         name: youtubeId
+   *         required: true
+   *         schema:
+   *           type: string
+   *     responses:
+   *       200:
+   *         description: "Metadata rewritten: { mediaPath, written: string[], removed: string[] }"
+   *       400:
+   *         description: Invalid YouTube ID
+   *       404:
+   *         description: No downloaded file is recorded for the video
+   *       409:
+   *         description: The Jellyfin TV profile is off, or the video cannot be republished (not in the TV layout, missing file or metadata, no episode assignment)
+   */
+  router.post('/api/videos/:youtubeId/tv-metadata/regenerate', metadataLimiter, verifyToken, async (req, res) => {
+    const { youtubeId } = req.params;
+    if (!/^[A-Za-z0-9_-]{6,20}$/.test(youtubeId)) return res.status(400).json({ error: 'Invalid YouTube ID' });
+    if (!tvPublication.isEnabled()) {
+      return res.status(409).json({ error: 'The Jellyfin TV library output profile is not enabled' });
+    }
+    try {
+      const result = await tvPublication.regenerateMetadata(youtubeId);
+      return res.json({ mediaPath: result.mediaPath, written: result.written, removed: result.removed });
+    } catch (err) {
+      const status = err && TV_REGENERATE_STATUS[err.code];
+      if (status) return res.status(status).json({ error: err.message, code: err.code });
+      req.log.error({ err, youtubeId }, 'Failed to regenerate TV episode metadata');
+      return res.status(500).json({ error: 'Failed to regenerate TV episode metadata' });
+    }
+  });
 
   /**
    * @swagger

@@ -30,6 +30,8 @@ describe('previewTemplate', () => {
       folderLine: 'TEDx Talks - How to Get Your Brain... - Hu4Yvq-g7_Y',
       fileLineLength: 'TEDx Talks - How to Get Your Brain... [Hu4Yvq-g7_Y].mp4'.length,
       folderLineLength: 'TEDx Talks - How to Get Your Brain... - Hu4Yvq-g7_Y'.length,
+      tvLine: expect.any(String),
+      tvLineLength: expect.any(Number),
     });
   });
 
@@ -142,5 +144,12 @@ describe('validateTemplate', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/timed out/);
+  });
+});
+
+describe('previewTvLayout', () => {
+  test('renders the sample as a Jellyfin TV show/season/episode path without yt-dlp', () => {
+    const { tvLine } = filenamePreview.previewTvLayout();
+    expect(tvLine).toMatch(/^TEDx Talks \[UCsT0YIqwnpJCM-mx7-gSA4Q\]\/Season 2019\/TEDx Talks - S2019E001 - .+ \[Hu4Yvq-g7_Y\]\.mp4$/);
   });
 });

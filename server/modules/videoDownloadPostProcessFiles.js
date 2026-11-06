@@ -12,6 +12,7 @@ const YtdlpCommandBuilder = require('./download/ytdlpCommandBuilder');
 const { selectSubtitleFilesToPrune } = require('./download/subtitleSidecarPruner');
 const { JobVideoDownload } = require('../models');
 const videoPersistence = require('./videoPersistence');
+const tvPublication = require('./tvPublication');
 const channelArtworkModule = require('./channelArtworkModule');
 const { prepareEpisodeArtwork, publishEpisodeArtwork } = require('./artwork/episodeArtwork');
 const { VIDEO_PERSISTED_MARKER } = require('./constants/outputMarkers');
@@ -477,7 +478,7 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
         const channelId = lookupChannelId;
         channelRecord = await Channel.findOne({
           where: { channel_id: channelId },
-          attributes: ['id', 'sub_folder', 'title', 'uploader', 'folder_name', 'default_rating', 'enabled', 'skip_video_folder', 'additional_tags']
+          attributes: ['id', 'sub_folder', 'title', 'uploader', 'description', 'folder_name', 'default_rating', 'enabled', 'skip_video_folder', 'additional_tags']
         });
 
         logger.info({ channelId, ownerProvided: !!ownerChannelId, found: !!channelRecord }, 'Post-process channel lookup');
@@ -594,11 +595,42 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
     }
     logger.info({ subfolder: channelSubFolder }, 'Post-process resolved target subfolder');
 
+    // MP3 downloads (and the MP3 of a video+MP3 download) keep their
+    // embedded tags and the regular layout.
+    const isAudioFile = parsedPath.ext.toLowerCase() === '.mp3';
+
+    // Jellyfin TV profile: plan the show/season/episode location before any
+    // move. A video that cannot be an episode yet (no known publication date)
+    // keeps the regular layout rather than getting an invented season.
+    let tvPublish = null;
+    if (tvPublication.isEnabled() && !isAudioFile && lookupChannelId && tempPathManager.isTempPath(videoPath)) {
+      try {
+        const prepared = await tvPublication.prepareDownload({
+          info: { ...jsonData, id },
+          channelId: lookupChannelId,
+          channelRecord,
+          mediaPath: videoPath,
+          baseDir: configModule.directoryPath,
+          subfolder: channelSubFolder,
+        });
+        if (prepared.plan) {
+          tvPublish = prepared;
+          logger.info({ id, season: prepared.plan.season, episode: prepared.plan.episode }, 'Post-process planned TV episode publication');
+        } else {
+          logger.warn({ id, reason: prepared.skipped }, 'Post-process could not publish as a TV episode; keeping the regular layout');
+        }
+      } catch (err) {
+        logger.error({ err, id }, 'Post-process TV publication planning failed; keeping the regular layout');
+      }
+    }
+
     // Phase 2: Calculate the final path for _actual_filepath with subfolder if applicable
     // Downloads always go to temp first, so we need to store the FINAL path, not the temp path
     let finalVideoPathForJson;
 
-    if (targetChannelFolder) {
+    if (tvPublish) {
+      finalVideoPathForJson = tvPublish.plan.media.target;
+    } else if (targetChannelFolder) {
       // Channel has subfolder - calculate path with subfolder included
       const videoFileName = path.basename(videoPath);
       if (outgoingFlat) {
@@ -629,12 +661,10 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
     fs.moveSync(jsonPath, newJsonPath, { overwrite: true }); // move the file
 
     // Generate NFO file for Jellyfin/Kodi/Emby compatibility if enabled
-    if (shouldWriteVideoNfoFiles()) {
+    // (TV publication writes its own show, season and episode NFOs.)
+    if (shouldWriteVideoNfoFiles() && !tvPublish) {
       nfoGenerator.writeVideoNfoFile(videoPath, jsonData);
     }
-
-    // Check if this is an audio file (MP3) - skip video-specific metadata embedding
-    const isAudioFile = parsedPath.ext.toLowerCase() === '.mp3';
 
     // Detect companion video file for dual-format downloads (video_mp3 mode)
     // When yt-dlp runs with --extract-audio --keep-video, it produces both MP4 and MP3
@@ -762,7 +792,7 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
 
       try {
         // Ensure parent channel directory exists (with retries for NFS/cross-filesystem transient errors)
-        await ensureDirWithRetries(targetChannelFolderForMove, { retries: 5, delayMs: 500 });
+        await ensureDirWithRetries(tvPublish ? tvPublish.plan.showDir : targetChannelFolderForMove, { retries: 5, delayMs: 500 });
 
         // Clean up yt-dlp intermediate files before moving
         // In video_mp3 mode with --extract-audio --keep-video, yt-dlp doesn't always
@@ -800,7 +830,20 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           logger.warn({ err, videoDirectory }, '[Post-Process] Subtitle pruning failed; keeping every subtitle file');
         }
 
-        if (outgoingFlat) {
+        if (tvPublish) {
+          // TV layout: the publisher stages and renames media, captions,
+          // thumbnail and NFOs into the season folder, then the temp leftovers
+          // of this video are discarded.
+          const published = await tvPublication.publishDownload(tvPublish);
+          finalVideoPath = published.mediaPath;
+          if (isFlatMode) {
+            for (const file of await fs.readdir(videoDirectory)) {
+              if (isFileForVideo(file, id)) await fs.remove(path.join(videoDirectory, file));
+            }
+          } else {
+            await fs.remove(videoDirectory);
+          }
+        } else if (outgoingFlat) {
           // Flat mode: move individual files from temp channel folder to final channel folder
           // Filter by video ID to avoid moving files belonging to other downloads
           const allFilesInDir = await fs.readdir(videoDirectory);
@@ -843,9 +886,14 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
 
         // Clean up empty parent directories in the temp path (e.g., empty channel folder)
         const tempBasePath = tempPathManager.getTempBasePath();
-        const parentDir = (outgoingFlat && !isFlatMode)
-          ? videoDirectory
-          : (isFlatMode ? videoDirectory : path.dirname(videoDirectory));
+        let parentDir;
+        if (tvPublish) {
+          parentDir = isFlatMode ? videoDirectory : path.dirname(videoDirectory);
+        } else {
+          parentDir = (outgoingFlat && !isFlatMode)
+            ? videoDirectory
+            : (isFlatMode ? videoDirectory : path.dirname(videoDirectory));
+        }
         await cleanupEmptyParents(parentDir, tempBasePath);
 
         // Verify the final file exists
@@ -967,16 +1015,18 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
 
     // Jellyfin episode thumbnail: <stem>-thumb.jpg, a byte copy of the
     // original landscape YouTube thumbnail (never cropped or resized).
-    if (channelArtworkModule.isEnabled() && !/\.mp3$/i.test(finalVideoPath)) {
+    // TV publisher owns the staged episode thumbnail.
+    if (!tvPublish && channelArtworkModule.isEnabled() && !/\.mp3$/i.test(finalVideoPath)) {
       publishEpisodeArtwork(prepareEpisodeArtwork({ filePath: finalVideoPath }), { logger });
     }
 
     // Copy channel thumbnail as poster.jpg to channel folder (must be done AFTER all moves)
     // Calculate the final channel folder path based on the final video path
     // In flat mode, the file is directly in the channel folder
-    const finalChannelFolderPath = outgoingFlat
+    let finalChannelFolderPath = outgoingFlat
       ? path.dirname(finalVideoPath)
       : path.dirname(path.dirname(finalVideoPath));
+    if (tvPublish) finalChannelFolderPath = tvPublish.plan.showDir;
     if (jsonData.channel_id) {
       await copyChannelPosterIfNeeded(jsonData.channel_id, finalChannelFolderPath);
       await copyChannelBackdropIfNeeded(jsonData.channel_id, finalChannelFolderPath);

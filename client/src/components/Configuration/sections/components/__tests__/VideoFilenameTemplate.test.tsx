@@ -214,4 +214,27 @@ describe('VideoFilenameTemplate', () => {
 
     expect(screen.getByTestId('filename-preview')).toHaveClass('opacity-60');
   });
+
+  describe('Jellyfin TV episode preview', () => {
+    const TV_RESPONSE = {
+      ...SAMPLE_RESPONSE,
+      tvLine: 'TEDx Talks [UC1]/Season 2019/TEDx Talks - S2019E001 - Focus [Hu4Yvq-g7_Y].mp4',
+      tvLineLength: 74,
+    };
+
+    it('shows the TV episode path when the Jellyfin TV profile is selected', async () => {
+      axios.post.mockResolvedValueOnce({ data: TV_RESPONSE });
+      render(<VideoFilenameTemplate value={defaultPrefix} onChange={() => {}} token="tok" outputProfile="jellyfinTv" />);
+      fireEvent.click(screen.getByTestId('filename-preview-button'));
+      expect(await screen.findByTestId('filename-preview-tv')).toHaveTextContent(TV_RESPONSE.tvLine);
+    });
+
+    it('hides the TV episode path for the movie profile', async () => {
+      axios.post.mockResolvedValueOnce({ data: TV_RESPONSE });
+      render(<VideoFilenameTemplate value={defaultPrefix} onChange={() => {}} token="tok" />);
+      fireEvent.click(screen.getByTestId('filename-preview-button'));
+      await screen.findByTestId('filename-preview-file');
+      expect(screen.queryByTestId('filename-preview-tv')).not.toBeInTheDocument();
+    });
+  });
 });
