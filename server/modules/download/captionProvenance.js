@@ -26,10 +26,10 @@ function resolveCaptionTimeline({ contract, state, videoPath, fileName, youtubeI
   return selected && selected.ext === 'srt' && selected.filepath === path.join(path.dirname(videoPath), fileName) ? 'final' : 'unknown';
 }
 
-function resolveCutCaptions({ state, videoPath, fileName, youtubeId, info, categories }) {
+function resolveCutCaptions({ state, videoPath, fileName, youtubeId, info, categories, actualDuration }) {
   if (!state || state.id !== youtubeId || state.filepath !== videoPath || state.__real_download !== true ||
       !Array.isArray(state.sponsorblock_chapters) || !Array.isArray(categories) || !categories.length ||
-      !Number.isFinite(info?.duration) || !Number.isFinite(state.duration)) return null;
+      !Number.isFinite(info?.duration) || !Number.isFinite(state.duration) || !Number.isFinite(actualDuration)) return null;
   const match = /\]\.([A-Za-z0-9-]+)\.srt$/i.exec(fileName);
   const sub = match && state.requested_subtitles?.[match[1]];
   if (!sub || sub.ext !== 'srt' || sub.filepath !== path.join(path.dirname(videoPath), fileName) ||
@@ -55,6 +55,7 @@ function resolveCutCaptions({ state, videoPath, fileName, youtubeId, info, categ
   if (!Number.isSafeInteger(duration) || duration <= 0 || merged.some(cut => cut.end > duration)) return null;
   const removed = merged.reduce((sum, cut) => sum + cut.end - cut.start, 0);
   if (Math.abs(Math.round(state.duration * 1000) - (duration - removed)) > 100) return null;
+  if (Math.abs(Math.round(actualDuration * 1000) - (duration - removed)) > 100) return null;
   const timingMap = [];
   let sourceStart = 0;
   let destStart = 0;

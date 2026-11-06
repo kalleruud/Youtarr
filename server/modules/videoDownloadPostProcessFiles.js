@@ -812,14 +812,19 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
         }
 
         const protectedCaptions = new Set();
+        const contract = process.argv[3] || '';
+        const cutMatch = /^managed-caption-cuts-([a-f0-9]+)$/.exec(contract);
+        let actualDuration;
+        if (cutMatch) {
+          const probe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath], { encoding: 'utf8', timeout: 30000 });
+          if (probe.status === 0 && typeof probe.stdout === 'string' && probe.stdout.trim()) actualDuration = Number(probe.stdout.trim());
+        }
         for (const file of filesInDir) {
           if (!isFileForVideo(file, id) || !/\.srt$/i.test(file) || !fs.existsSync(path.join(videoDirectory, file))) continue;
           const subtitlePath = path.join(videoDirectory, file);
           const provenance = resolveCaptionProvenance({ fileName: file, youtubeId: id, info: jsonData });
-          const contract = process.argv[3] || '';
-          const cutMatch = /^managed-caption-cuts-([a-f0-9]+)$/.exec(contract);
           const categories = cutMatch ? Buffer.from(cutMatch[1], 'hex').toString('utf8').split(',') : [];
-          const cutCaptions = cutMatch && resolveCutCaptions({ state: captionState, videoPath, fileName: file, youtubeId: id, info: jsonData, categories });
+          const cutCaptions = cutMatch && resolveCutCaptions({ state: captionState, videoPath, fileName: file, youtubeId: id, info: jsonData, categories, actualDuration });
           const result = await publishCaption({
             subtitlePath,
             backupRoot: path.join(configModule.getJobsPath(), 'caption-originals'),

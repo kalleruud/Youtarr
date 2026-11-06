@@ -11,7 +11,7 @@ describe('cut timing evidence', () => {
   const { resolveCutCaptions } = require('../captionProvenance');
   const input = {
     videoPath: '/tmp/video.mp4', youtubeId: 'abc123', fileName: 'Video [abc123].en.srt',
-    info: { duration: 6 }, categories: ['sponsor'],
+    info: { duration: 6 }, categories: ['sponsor'], actualDuration: 4.038,
     state: { id: 'abc123', filepath: '/tmp/video.mp4', __real_download: true, duration: 4,
       requested_subtitles: { en: { ext: 'srt', filepath: '/tmp/Video [abc123].en.srt', data: 'source' } },
       sponsorblock_chapters: [{ category: 'sponsor', start_time: 2, end_time: 4 }] },
@@ -24,6 +24,7 @@ describe('cut timing evidence', () => {
   });
   test.each([
     { state: { ...input.state, duration: 6 } },
+    { actualDuration: 6 }, { actualDuration: undefined },
     { state: { ...input.state, sponsorblock_chapters: null } },
     { state: { ...input.state, requested_subtitles: { en: { ext: 'srt' } } } },
     { state: { ...input.state, requested_subtitles: { en: { ext: 'srt', filepath: '/tmp/other.srt', data: 'source' } } } },
