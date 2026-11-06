@@ -10,7 +10,7 @@ class ArtworkValidationError extends Error {}
 
 const status = { enabled: true, source: 'auto', protected: false, revision: 1 };
 
-function buildApp(overrides = {}) {
+function buildApp(overrides = {}, limiter = (req, res, next) => next()) {
   const channelArtworkModule = {
     ArtworkValidationError,
     getStatus: jest.fn(async () => status),
@@ -27,7 +27,7 @@ function buildApp(overrides = {}) {
   app.use(createChannelArtworkRoutes({
     verifyToken: (req, res, next) => next(),
     channelArtworkModule,
-    artworkUploadRateLimiter: (req, res, next) => next(),
+    artworkUploadRateLimiter: limiter,
   }));
   return { app, channelArtworkModule };
 }
@@ -57,6 +57,13 @@ describe('channel artwork routes', () => {
     const { app, channelArtworkModule } = buildApp();
     await request(app).put('/api/channels/UC1/artwork').send({ source: 'manual', protected: true });
     expect(channelArtworkModule.updatePreference).toHaveBeenCalledWith('UC1', { source: 'manual', protected: true });
+  });
+
+  test('blocks selection when the shared artwork budget is exhausted', async () => {
+    const { app, channelArtworkModule } = buildApp({}, (req, res) => res.sendStatus(429));
+    const res = await request(app).put('/api/channels/UC1/artwork').send({ source: 'auto' });
+    expect(res.status).toBe(429);
+    expect(channelArtworkModule.updatePreference).not.toHaveBeenCalled();
   });
 
   test('maps validation errors to 400 with the message', async () => {

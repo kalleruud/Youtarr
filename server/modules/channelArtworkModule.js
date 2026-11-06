@@ -184,8 +184,7 @@ class ChannelArtworkModule {
     if (sha && sha === record.published_sha256) return true;
     const squareCache = path.join(configModule.getImagePath(), `channelthumb-${channelId}.jpg`);
     if (sha && sha === sha256File(squareCache)) return true;
-    const dims = await probeImage(targetPath);
-    return Boolean(dims && dims.width === dims.height);
+    return false;
   }
 
   /**

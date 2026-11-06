@@ -10,7 +10,7 @@ const CHANNEL_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
  * @param {Object} deps
  * @param {Function} deps.verifyToken - Token verification middleware
  * @param {Object} deps.channelArtworkModule - Artwork orchestration module
- * @param {Function} deps.artworkUploadRateLimiter - Rate limiter for uploads and regeneration
+ * @param {Function} deps.artworkUploadRateLimiter - Shared rate limiter for artwork mutations
  * @returns {express.Router}
  */
 module.exports = function createChannelArtworkRoutes({ verifyToken, channelArtworkModule, artworkUploadRateLimiter }) {
@@ -93,7 +93,7 @@ module.exports = function createChannelArtworkRoutes({ verifyToken, channelArtwo
    *       400: { description: Invalid selection }
    *       404: { description: Channel not found }
    */
-  router.put('/api/channels/:channelId/artwork', verifyToken, validateChannelId,
+  router.put('/api/channels/:channelId/artwork', verifyToken, validateChannelId, artworkUploadRateLimiter,
     handle('select', (req) => {
       const { source, protected: pinned } = req.body || {};
       return channelArtworkModule.updatePreference(req.params.channelId, { source, protected: pinned });
@@ -141,7 +141,7 @@ module.exports = function createChannelArtworkRoutes({ verifyToken, channelArtwo
    *       200: { description: Updated artwork status }
    *       404: { description: Channel not found }
    */
-  router.delete('/api/channels/:channelId/artwork/poster', verifyToken, validateChannelId,
+  router.delete('/api/channels/:channelId/artwork/poster', verifyToken, validateChannelId, artworkUploadRateLimiter,
     handle('reset', (req) => channelArtworkModule.resetPoster(req.params.channelId)));
 
   /**
@@ -180,7 +180,7 @@ module.exports = function createChannelArtworkRoutes({ verifyToken, channelArtwo
    *       200: { description: Updated artwork status }
    *       404: { description: Channel not found }
    */
-  router.post('/api/channels/:channelId/artwork/refresh', verifyToken, validateChannelId,
+  router.post('/api/channels/:channelId/artwork/refresh', verifyToken, validateChannelId, artworkUploadRateLimiter,
     handle('refresh', async (req) => {
       const channelId = req.params.channelId;
       if (!(await channelArtworkModule.findChannel(channelId))) return null;

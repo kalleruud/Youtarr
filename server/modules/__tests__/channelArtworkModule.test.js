@@ -100,15 +100,27 @@ describe('poster selection and publication', () => {
   });
 
   test('replaces the old square avatar copy in the channel folder', async () => {
-    fs.writeFileSync(folderPoster(), image(360, 360, 'legacy'));
+    const legacy = image(360, 360, 'legacy');
+    fs.writeFileSync(path.join(mockState.imageDir, 'channelthumb-UC1.jpg'), legacy);
+    fs.writeFileSync(folderPoster(), legacy);
     await artwork.publishPoster('UC1');
     expect(fs.readFileSync(folderPoster())).toEqual(fs.readFileSync(artwork.posterCachePath('UC1')));
   });
 
-  test('keeps a portrait poster.jpg that Youtarr did not write', async () => {
-    fs.writeFileSync(folderPoster(), image(600, 900, 'hand-made'));
+  test.each([[600, 900], [360, 360]])('keeps an unknown %ix%i poster', async (width, height) => {
+    const original = image(width, height, 'hand-made');
+    fs.writeFileSync(folderPoster(), original);
     const result = await artwork.publishPoster('UC1');
     expect(result.note).toMatch(/did not write/);
+    expect(fs.readFileSync(folderPoster())).toEqual(original);
+  });
+
+  test('replaces its previously published poster when the avatar changes', async () => {
+    await artwork.publishPoster('UC1');
+    const previous = fs.readFileSync(folderPoster());
+    fs.writeFileSync(avatarPath(), image(900, 900, 'avatar-v2'));
+    await artwork.publishPoster('UC1');
+    expect(fs.readFileSync(folderPoster())).not.toEqual(previous);
   });
 
   test('leaves no staging files behind', async () => {

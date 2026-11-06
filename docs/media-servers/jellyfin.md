@@ -109,7 +109,7 @@ YouTube channel avatars are square (Youtarr's cached copy is 360x360) and video 
   4. A generated poster: the full avatar centered (never stretched or cropped) on a blurred, darkened cover of itself, with the channel title below; a solid colour derived from the channel ID when there is no avatar. Generation is deterministic: unchanged inputs produce byte-identical output and keep the same revision.
 - **Episode thumbnail (`<VIDEO NAME>-thumb.jpg`)**: a byte-for-byte copy of the original 16:9 thumbnail, written for new downloads; existing episodes get it from **Regenerate & republish**. Nothing is cropped, and no video is downloaded or rewritten.
 - Youtarr stores each channel's poster origin, dimensions, revision, selection and pin in the `channel_artworks` table.
-- A `poster.jpg` Youtarr did not write (not its previous poster, not the square avatar copy, not square) is kept and reported in the Artwork settings, unless the owner uploads a poster.
+- A `poster.jpg` Youtarr did not write (not its previous poster, not the matching cached square avatar copy) is kept and reported in the Artwork settings, unless the owner uploads a poster.
 - When the published poster changes and Jellyfin is connected (Settings > Media Servers), Youtarr asks Jellyfin to re-read that one show's images (`POST /Items/{id}/Refresh` with a full image refresh) instead of scanning the library. The outcome is shown in Channel Settings > Artwork: a failure or a show Jellyfin has not scanned yet can be retried there. Apps can keep showing the previous image until their own image cache expires.
 
 Manual check still required: these posters have not yet been verified in Jellyfin Web or JellySee show, season and episode views.
