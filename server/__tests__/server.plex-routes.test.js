@@ -197,6 +197,8 @@ const setupServer = async ({ authEnabled = 'false', passwordHash = null } = {}) 
   jest.doMock('express-rate-limit', () => jest.fn(() => (req, res, next) => next()));
 
   jest.doMock('../modules/episodeAssignment', () => ({ getStatus: jest.fn() }));
+
+  jest.doMock('../modules/tvPublication', () => ({ isEnabled: jest.fn(() => false), regenerateMetadata: jest.fn() }));
   const serverModule = require('../server');
   await serverModule.initialize();
 

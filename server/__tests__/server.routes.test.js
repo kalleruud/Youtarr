@@ -455,6 +455,7 @@ const createServerModule = ({
 
         jest.doMock('../modules/setupTokenModule', () => setupTokenModuleMock);
         jest.doMock('../modules/episodeAssignment', () => ({ getStatus: jest.fn() }));
+        jest.doMock('../modules/tvPublication', () => ({ isEnabled: jest.fn(() => false), regenerateMetadata: jest.fn() }));
 
         const serverModule = require('../server');
 
