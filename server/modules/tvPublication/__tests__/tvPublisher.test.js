@@ -103,10 +103,10 @@ describe('tvPublisher', () => {
   test('a second copy under another stem is removed so the episode is not duplicated', async () => {
     const p = plan(await downloadFixture());
     await fs.outputFile(path.join(p.seasonDir, `Show - S2026E001 - Old [${ID}].mp4`), 'old');
-    await fs.outputFile(path.join(p.seasonDir, `Show - S2026E002 - Other [otherVid01].mp4`), 'other');
+    await fs.outputFile(path.join(p.seasonDir, 'Show - S2026E002 - Other [otherVid01].mp4'), 'other');
     const result = await tvPublisher.publish(p);
     expect([result.removed.map((f) => path.basename(f)), (await fs.readdir(p.seasonDir)).filter((n) => n.endsWith('.mp4'))])
-      .toEqual([[`Show - S2026E001 - Old [${ID}].mp4`], [`Show - S2026E001 - First [${ID}].mp4`, `Show - S2026E002 - Other [otherVid01].mp4`].sort()]);
+      .toEqual([[`Show - S2026E001 - Old [${ID}].mp4`], [`Show - S2026E001 - First [${ID}].mp4`, 'Show - S2026E002 - Other [otherVid01].mp4'].sort()]);
   });
 
   test('findShowFolderName finds the show folder by channel ID only', async () => {
