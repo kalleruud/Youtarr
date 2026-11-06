@@ -96,6 +96,15 @@ const mockTvPublication = {
 
 jest.mock('../tvPublication', () => mockTvPublication);
 
+jest.mock('../channelArtworkModule', () => ({
+  isEnabled: jest.fn(() => false), syncChannel: jest.fn().mockResolvedValue(),
+}));
+jest.mock('../artwork/episodeArtwork', () => ({
+  prepareEpisodeArtwork: jest.fn(), publishEpisodeArtwork: jest.fn(),
+}));
+const channelArtwork = require('../channelArtworkModule');
+const episodeArtwork = require('../artwork/episodeArtwork');
+
 jest.mock('../../logger');
 
 // downloadSettingsResolver is intentionally not mocked: it is a pure function, so these
@@ -152,6 +161,7 @@ describe('videoDownloadPostProcessFiles', () => {
     JobVideoDownload.update.mockResolvedValue([0]);
     mockVideoPersistence.persistDownloadedVideoForJob.mockResolvedValue(null);
     mockTvPublication.isEnabled.mockReturnValue(false);
+    channelArtwork.isEnabled.mockReturnValue(false);
     Channel.findOne.mockResolvedValue(null);
     Channel.findAll.mockResolvedValue([]);
     ChannelVideo.findAll.mockResolvedValue([]);
@@ -2133,6 +2143,29 @@ describe('videoDownloadPostProcessFiles', () => {
         { status: 'completed', file_path: episodePath },
         expect.any(Object)
       );
+    });
+
+    describe('with portrait show artwork on', () => {
+      beforeEach(() => {
+        channelArtwork.isEnabled.mockReturnValue(true);
+        configModule.__setConfig({ writeChannelPosters: true, libraryOutputProfile: 'jellyfinTv' });
+      });
+
+      afterEach(() => {
+        channelArtwork.isEnabled.mockReturnValue(false);
+      });
+
+      it('publishes the show poster into the TV show folder', async () => {
+        await loadModule();
+        await settleAsync(20);
+        expect(channelArtwork.syncChannel).toHaveBeenCalledWith('channel123', { folderPath: showDir });
+      });
+
+      it('leaves the episode thumbnail to the TV publisher', async () => {
+        await loadModule();
+        await settleAsync(20);
+        expect(episodeArtwork.publishEpisodeArtwork).not.toHaveBeenCalled();
+      });
     });
 
     it('does not write the movie NFO', async () => {

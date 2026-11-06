@@ -82,7 +82,7 @@ With `libraryOutputProfile` set to `jellyfinTv` (Settings -> Core -> Library Out
 <downloads>/[__subfolder/]
   Channel [UCxxxxxxxxxxxxxxxxxxxxxx]/        <- one show per YouTube channel (the ID keeps it stable across renames)
     tvshow.nfo
-    poster.jpg                              <- channel artwork (when "Copy channel poster.jpg files" is on)
+    poster.jpg                              <- show poster (portrait with "Portrait show posters", see below)
     Season 2026/                            <- one season per publication year
       season.nfo
       Channel - S2026E001 - Title [videoId].mp4
@@ -97,10 +97,11 @@ With `libraryOutputProfile` set to `jellyfinTv` (Settings -> Core -> Library Out
 - MP3 downloads (MP3 only, and the MP3 of video + MP3) and videos without a known publication date keep the regular layout, so no season is invented. Videos whose date correction is under review publish with the stored assignment.
 - `POST /api/videos/{youtubeId}/tv-metadata/regenerate` rewrites `tvshow.nfo`, `season.nfo` and the episode NFO of an episode already in this layout from the cached `.info.json`; the media, subtitles and thumbnail are not touched and nothing is downloaded.
 - The "Generate video .nfo files" setting applies to the movie layout only; TV publication always writes its NFOs.
+- The episode thumbnail is published with the episode: a byte copy of the landscape YouTube thumbnail, staged and renamed like the other files. With portrait show posters on, the show poster is written to (and Jellyfin is asked to refresh) the `Channel [UC…]` show folder once it exists; until the channel's first episode is published, the regular channel folder is used.
 
 Recommended library settings for the YouTube Shows library: Content Type **Shows**; enable the **Nfo** metadata reader; disable the **Nfo** metadata saver; disable every remote metadata downloader and image fetcher (no TheTVDB/TMDb matching for YouTube channels); mount the media folder read-only in the Jellyfin container. Jellyfin's real-time monitoring picks up new episodes; Youtarr does not yet send Jellyfin a targeted refresh after publishing.
 
-Not covered yet: moving existing downloads into this layout (with their watch state), and portrait show posters / landscape episode artwork selection. Empty `Season <year>` folders left after deleting a season's last episode are not cleaned up automatically.
+Not covered yet: moving existing downloads into this layout (with their watch state). Empty `Season <year>` folders left after deleting a season's last episode are not cleaned up automatically.
 
 ## Metadata Configuration
 
