@@ -392,6 +392,15 @@ Missing, invalid, or `estimated` (synthetic ordering) dates return `date-require
 
 When duplicate catalog rows disagree, status and allocation responses expose a differing observation within the highest-confidence date tier instead of hiding it behind a matching older row. The persisted assignment remains unchanged pending review.
 
+### Caption provenance and delayed caption checks
+
+Migration `20261106203537-create-caption-tracks` adds two tables and changes no existing one (no foreign keys, so it does not depend on the `videos` table's collation history):
+
+- `caption_tracks`: one row per SRT sidecar Youtarr published, unique on (`youtube_id`, `track_code`). `source` is `uploaded`, `automatic`, `translated`, `generated` or `unknown`, taken from yt-dlp metadata (the URL yt-dlp fetched, or the code appearing in only one of `subtitles`/`automatic_captions`; a translation's URL carries `tlang`), never from the code alone. `origin` is `download`, `enrichment` or `unrecorded`. `media_revision` (size and modification time of the media file when the track was written), `source_sha256` (bytes as fetched), `result_sha256` (bytes as published), `normalizer_version` (set when rolling-caption normalization ran), `retrieved_at` and `protected` (never replaced by a caption check).
+- `caption_enrichment_jobs`: one durable delayed caption check per video (unique `youtube_id`). `status` is `pending`, `running`, `completed`, `exhausted` or `blocked`; `wanted` is the JSON list of languages and reasons being checked; `attempts`/`max_attempts`, `baseline_at` (download time the schedule counts from), `next_attempt_at`, `last_attempt_at`, `lease_until` (a running check; a restart returns it to `pending` without counting an attempt), `media_revision` (the file the check was scheduled for) and `reason` (shown to the user).
+
+Rolling the migration back discards caption provenance, protection flags and pending checks; caption files on disk are unaffected.
+
 ### Channel artwork
 
 `channel_artworks` (migration `20261106104507-create-channel-artworks`) holds one row per YouTube channel ID describing its 2:3 show poster: `poster_source` (`auto` or `manual`), `poster_protected` (the owner's pin), `poster_origin` (`manual`, `upstream`, `generated`), `poster_width`/`poster_height`, `poster_revision` (incremented only when the poster bytes change), `poster_sha256`, `input_fingerprint` (selection, source images and title the poster was made from, so unchanged inputs skip regeneration), `published_sha256`/`published_at`/`publish_note` for the folder's `poster.jpg`, and `refresh_status`/`refresh_message`/`refresh_attempted_at` for the last Jellyfin artwork refresh. The migration is additive: it changes no existing table, and a missing row means automatic artwork that has not been resolved yet. Image files themselves live in the image cache (`channelposter-<id>.jpg`, `channelposter-manual-<id>.jpg`, `channelavatar-<id>.jpg`), not the database. Rolling the migration back only discards selections, pins and refresh history.
