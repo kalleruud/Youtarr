@@ -457,6 +457,10 @@ const createServerModule = ({
         jest.doMock('../modules/episodeAssignment', () => ({ getStatus: jest.fn() }));
         jest.doMock('../modules/tvPublication', () => ({ isEnabled: jest.fn(() => false), regenerateMetadata: jest.fn() }));
         jest.doMock('../modules/channelArtworkModule', () => ({ isEnabled: jest.fn(() => false), syncChannel: jest.fn(), ArtworkValidationError: class extends Error {} }));
+        jest.doMock('../modules/captions', () => ({
+          catalog: { getVideoCaptions: jest.fn(), recordDownloads: jest.fn().mockResolvedValue() },
+          enrichment: { start: jest.fn().mockResolvedValue() },
+        }));
 
         const serverModule = require('../server');
 

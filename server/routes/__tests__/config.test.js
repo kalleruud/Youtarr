@@ -385,6 +385,24 @@ describe('POST /updateconfig', () => {
     );
   });
 
+  describe('caption preference validation', () => {
+    test.each([
+      [{ captionSourcePolicy: 'everything' }, /Caption source/],
+      [{ captionEnrichmentRetrySchedule: '1h,30m' }, /increase/],
+      [{ captionEnrichmentMinIntervalSeconds: 2 }, /10 to 3600/],
+    ])('rejects %p', async (body, message) => {
+      const { app } = makeApp();
+      const res = await supertest(app).post('/updateconfig').send(body);
+      expect([res.status, res.body.error]).toEqual([400, expect.stringMatching(message)]);
+    });
+
+    test('accepts a valid check schedule', async () => {
+      const { app } = makeApp();
+      const res = await supertest(app).post('/updateconfig').send({ captionEnrichmentRetrySchedule: '2h,3d' });
+      expect(res.status).toBe(200);
+    });
+  });
+
   describe('ytdlpDownloadRateLimit validation', () => {
     test.each(['', '5M', '500K', '1.5M', '2G', '1500'])(
       'returns 200 for valid rate limit %s',

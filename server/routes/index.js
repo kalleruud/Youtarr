@@ -24,6 +24,8 @@ const createSubfolderRoutes = require('./subfolders');
 const createSchedulesRoutes = require('./schedules');
 const createLogRoutes = require('./logs');
 const createVideoTrashRoutes = require('./videoTrash');
+const createCaptionRoutes = require('./captions');
+const captions = require('../modules/captions');
 const videoMetadataModule = require('../modules/videoMetadataModule');
 const videoTrashModule = require('../modules/videoTrashModule');
 const videoOembedEnricher = require('../modules/videoOembedEnricher');
@@ -106,6 +108,9 @@ function registerRoutes(app, deps) {
 
   // Channel show poster routes (upload/select/pin/reset/regenerate, Jellyfin artwork refresh)
   app.use(createChannelArtworkRoutes({ verifyToken, channelArtworkModule, artworkUploadRateLimiter }));
+
+  // Caption provenance, protection, delayed checks and preference preview
+  app.use(createCaptionRoutes({ verifyToken, captionCatalog: captions.catalog }));
 
   // Video routes
   app.use(createVideoRoutes({
