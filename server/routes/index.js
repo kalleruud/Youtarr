@@ -9,6 +9,7 @@ const createPlexRoutes = require('./plex');
 const createApiKeyRoutes = require('./apikeys');
 const createSubscriptionRoutes = require('./subscriptions');
 const createVideoDetailRoutes = require('./videoDetail');
+const episodeAssignment = require('../modules/episodeAssignment');
 const createVideoSearchRoutes = require('./videoSearch');
 const createChannelSearchRoutes = require('./channelSearch');
 const createPlaylistRoutes = require('./playlists');
@@ -133,7 +134,7 @@ function registerRoutes(app, deps) {
   app.use(createSubscriptionRoutes({ verifyToken, subscriptionImportModule }));
 
   // Video detail routes (metadata and streaming)
-  app.use(createVideoDetailRoutes({ verifyToken, videoMetadataModule, mediaServers }));
+  app.use(createVideoDetailRoutes({ verifyToken, videoMetadataModule, mediaServers, episodeAssignment }));
 
   // Playlist routes
   app.use(createPlaylistRoutes({ verifyToken, playlistModule, downloadModule, m3uGenerator, mediaServers, models, channelSettingsModule, ratingMapper, subfolderModule, playlistVideoFilters, playlistDownloadModule, storageGuard }));

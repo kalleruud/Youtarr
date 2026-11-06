@@ -67,3 +67,11 @@ test('retries a deadlocked allocation and returns the persisted identity', async
 test('invalid dates cannot create a season', async () => {
   expect((await get('a', '2021-02-30', 'exact')).status).toBe('date-required');
 });
+
+test('status exposes missing dates and corrected dates without allocating', async () => {
+  mockCatalog = [entry('a', '2021-01-01', 'estimated')];
+  expect(await assignments.getStatus('a')).toEqual({ status: 'date-required' });
+  mockRows.set('a', { youtube_id: 'a', channel_id: 'UC1', season: 2020, episode: 1, published_at: '2020-01-01T00:00:00.000Z' });
+  mockCatalog = [entry('a', '2021-01-01')];
+  expect(await assignments.getStatus('a')).toMatchObject({ status: 'date-correction-review', season: 2020, observedPublishedAt: '2021-01-01T00:00:00.000Z' });
+});

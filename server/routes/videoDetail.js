@@ -22,8 +22,37 @@ const metadataLimiter = rateLimit({
  * @param {Object} deps.mediaServers - Media server aggregate (watchStatusQueries)
  * @returns {express.Router}
  */
-function createVideoDetailRoutes({ verifyToken, videoMetadataModule, mediaServers }) {
+function createVideoDetailRoutes({ verifyToken, videoMetadataModule, mediaServers, episodeAssignment }) {
   const router = express.Router();
+
+  /**
+   * @swagger
+   * /api/videos/{youtubeId}/episode-identity:
+   *   get:
+   *     summary: Get TV episode identity and date review status
+   *     tags: [Videos]
+   *     parameters:
+   *       - in: path
+   *         name: youtubeId
+   *         required: true
+   *         schema:
+   *           type: string
+   *     responses:
+   *       200:
+   *         description: Assignment and publication date status
+   *       400:
+   *         description: Invalid YouTube ID
+   */
+  router.get('/api/videos/:youtubeId/episode-identity', metadataLimiter, verifyToken, async (req, res) => {
+    const { youtubeId } = req.params;
+    if (!/^[A-Za-z0-9_-]{6,20}$/.test(youtubeId)) return res.status(400).json({ error: 'Invalid YouTube ID' });
+    try {
+      return res.json(await episodeAssignment.getStatus(youtubeId));
+    } catch (err) {
+      req.log.error({ err, youtubeId }, 'Failed to get episode identity');
+      return res.status(500).json({ error: 'Failed to retrieve episode identity' });
+    }
+  });
 
   /**
    * Middleware to support token via query parameter.

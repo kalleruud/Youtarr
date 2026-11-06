@@ -5,6 +5,7 @@ const EpisodeShow = require('../models/episodeShow');
 const EpisodeAssignment = require('../models/episodeAssignment');
 
 const MAX_RETRIES = 5;
+const NO_QUERY_RETRY = { max: 0 };
 const sourceRank = source => source === 'exact' ? 2 : 1;
 
 function dateOf(value, source) {
@@ -19,6 +20,16 @@ function dateOf(value, source) {
 }
 
 class EpisodeAssignments {
+  async getStatus(youtubeId) {
+    const rows = await ChannelVideo.findAll({ where: { youtube_id: youtubeId }, attributes: ['youtube_id', 'channel_id', 'publishedAt', 'published_at_source'] });
+    const catalog = rows.filter(row => row.youtube_id === youtubeId)
+      .filter(row => dateOf(row.publishedAt, row.published_at_source))
+      .sort((a, b) => sourceRank(b.published_at_source) - sourceRank(a.published_at_source) || dateOf(a.publishedAt, a.published_at_source).localeCompare(dateOf(b.publishedAt, b.published_at_source)));
+    const existing = await EpisodeAssignment.findByPk(youtubeId);
+    const observation = catalog[0];
+    if (existing) return this.result(existing, observation?.publishedAt, observation?.published_at_source);
+    return { status: observation ? 'not-assigned' : 'date-required' };
+  }
   // Called at the publication seam: the first call allocates the entire known
   // channel catalog, so publication order does not determine initial numbers.
   async ensureEpisodeAssignment({ channelId, youtubeId, publishedAt, source = null }) {
@@ -38,9 +49,9 @@ class EpisodeAssignments {
 
   async allocate({ channelId, youtubeId, publishedAt, source }) {
     return sequelize.transaction({ isolationLevel: Transaction.ISOLATION_LEVELS.READ_COMMITTED }, async transaction => {
-      await EpisodeShow.findOrCreate({ where: { channel_id: channelId }, transaction });
-      await EpisodeShow.findByPk(channelId, { transaction, lock: transaction.LOCK.UPDATE });
-      const catalog = await ChannelVideo.findAll({ where: { channel_id: channelId }, attributes: ['youtube_id', 'publishedAt', 'published_at_source'], transaction });
+      await EpisodeShow.findOrCreate({ where: { channel_id: channelId }, transaction, retry: NO_QUERY_RETRY });
+      await EpisodeShow.findByPk(channelId, { transaction, lock: transaction.LOCK.UPDATE, retry: NO_QUERY_RETRY });
+      const catalog = await ChannelVideo.findAll({ where: { channel_id: channelId }, attributes: ['youtube_id', 'publishedAt', 'published_at_source'], transaction, retry: NO_QUERY_RETRY });
       const candidates = new Map();
       for (const row of catalog) {
         const date = dateOf(row.publishedAt, row.published_at_source);
@@ -55,14 +66,14 @@ class EpisodeAssignments {
       if (requestedDate && (source === 'exact' || !candidates.has(youtubeId))) candidates.set(youtubeId, { id: youtubeId, date: requestedDate, source });
       const observedDate = publishedAt || candidates.get(youtubeId)?.date;
       const observedSource = publishedAt ? source : candidates.get(youtubeId)?.source;
-      const existing = await EpisodeAssignment.findByPk(youtubeId, { transaction });
+      const existing = await EpisodeAssignment.findByPk(youtubeId, { transaction, retry: NO_QUERY_RETRY });
       if (existing) {
         if (existing.channel_id !== channelId) throw new Error('Video is already assigned to another channel');
         return this.result(existing, observedDate, observedSource);
       }
       const sorted = [...candidates.values()].sort((a, b) => a.date.localeCompare(b.date) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-      const assigned = await EpisodeAssignment.findAll({ where: { channel_id: channelId }, transaction });
-      const claimed = await EpisodeAssignment.findAll({ where: { youtube_id: { [Op.in]: [...candidates.keys()] } }, transaction });
+      const assigned = await EpisodeAssignment.findAll({ where: { channel_id: channelId }, transaction, retry: NO_QUERY_RETRY });
+      const claimed = await EpisodeAssignment.findAll({ where: { youtube_id: { [Op.in]: [...candidates.keys()] } }, transaction, retry: NO_QUERY_RETRY });
       const owner = claimed.find(row => row.youtube_id === youtubeId);
       if (owner && owner.channel_id !== channelId) throw new Error('Video is already assigned to another channel');
       if (owner) return this.result(owner, observedDate, observedSource);
@@ -75,7 +86,7 @@ class EpisodeAssignments {
         const season = Number(candidate.date.slice(0, 4));
         const episode = (max.get(season) || 0) + 1;
         const row = await EpisodeAssignment.create({ youtube_id: candidate.id, channel_id: channelId, season, episode,
-          published_at: candidate.date, published_at_source: candidate.source, assignment_version: 1 }, { transaction });
+          published_at: candidate.date, published_at_source: candidate.source, assignment_version: 1 }, { transaction, retry: NO_QUERY_RETRY });
         max.set(season, episode);
         if (candidate.id === youtubeId) target = row;
       }

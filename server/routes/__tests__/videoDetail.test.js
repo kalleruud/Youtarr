@@ -581,3 +581,16 @@ describe('GET /api/videos/:youtubeId/watch-status', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Failed to retrieve watch status' });
   });
 });
+
+describe('GET /api/videos/:youtubeId/episode-identity', () => {
+  test('returns the read-only identity status', async () => {
+    const episodeAssignment = { getStatus: jest.fn().mockResolvedValue({ status: 'date-required' }) };
+    const app = express();
+    app.use(createVideoDetailRoutes({ verifyToken: (req, res, next) => next(), episodeAssignment }));
+    const handler = findRouteHandler(app, 'get', '/api/videos/:youtubeId/episode-identity');
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() };
+    await handler({ params: { youtubeId: 'abcdefghijk' } }, res);
+    expect(res.json).toHaveBeenCalledWith({ status: 'date-required' });
+    expect(episodeAssignment.getStatus).toHaveBeenCalledWith('abcdefghijk');
+  });
+});
