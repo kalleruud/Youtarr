@@ -50,5 +50,11 @@ test('additive migration preserves legacy data and concurrent allocations serial
   expect(history).toHaveLength(1);
   await db.query("UPDATE channels SET title='renamed'");
   expect((await get('a')).episode).toBe(1);
+  await db.query("UPDATE channelvideos SET published_at='2022-02-01' WHERE youtube_id='a'");
+  expect(await allocator.getStatus('a')).toMatchObject({ status: 'date-correction-review', season: 2021, episode: 1 });
+  expect(await allocator.ensureEpisodeAssignment({ channelId: 'UC1', youtubeId: 'live', publishedAt: '2021-03-01', source: 'estimated' })).toMatchObject({ status: 'date-required' });
+  const live = await allocator.ensureEpisodeAssignment({ channelId: 'UC1', youtubeId: 'live', publishedAt: '2021-03-01', source: 'exact' });
+  const replay = await allocator.ensureEpisodeAssignment({ channelId: 'UC1', youtubeId: 'live', publishedAt: '2021-03-01', source: 'exact' });
+  expect(replay).toMatchObject({ season: live.season, episode: live.episode });
   await expect(db.query("INSERT INTO episode_assignments (youtube_id, channel_id, season, episode, published_at, assignment_version) VALUES ('other','UC1',2021,1,'2021-01-01',1)")).rejects.toThrow();
 });
