@@ -32,7 +32,29 @@ const LANGUAGE_VARIANT_SUFFIX = '(-(?-i:[A-Z][a-z]{3}))?(-(?-i:[A-Z]{2}|[0-9]{3}
 // A YouTube video id, the only shape interpolated into --match-filter.
 const YOUTUBE_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
+const PLAYBACK_SOCKET_TIMEOUT_SECONDS = 20;
+const PLAYBACK_RETRIES = 1;
+const PLAYBACK_RATE = '4M';
+const PLAYBACK_MAX_DURATION_SECONDS = 4 * 60 * 60;
+
 class YtdlpCommandBuilder {
+  static buildPlaybackArgs(videoId, directory, maxBytes) {
+    if (!YOUTUBE_ID_PATTERN.test(videoId)) throw new Error('Invalid video identity');
+    return [
+      ...this.buildCommonArgs(configModule.getConfig(), { skipSleepRequests: true }),
+      '--ignore-config', '--no-playlist', '--no-progress', '--no-warnings',
+      '--no-cache-dir', '--socket-timeout', String(PLAYBACK_SOCKET_TIMEOUT_SECONDS), '--retries', String(PLAYBACK_RETRIES),
+      '--fragment-retries', String(PLAYBACK_RETRIES), '--concurrent-fragments', '1',
+      '--limit-rate', PLAYBACK_RATE, '--max-filesize', String(maxBytes),
+      '--match-filter', `!is_live & !is_upcoming & duration <= ${PLAYBACK_MAX_DURATION_SECONDS}`,
+      '--paths', directory, '--paths', `temp:${directory}`,
+      '-f', 'bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/best[ext=mp4][height<=1080]',
+      '--merge-output-format', 'mp4', '--remux-video', 'mp4',
+      '-o', path.join(directory, 'media.%(ext)s'),
+      '--', `https://www.youtube.com/watch?v=${videoId}`,
+    ];
+  }
+
   /**
    * Build output path with optional subfolder support
    * Downloads always go to temp path first, then get moved to final location
