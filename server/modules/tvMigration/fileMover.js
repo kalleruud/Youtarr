@@ -6,6 +6,7 @@
 // no-op, so a resumed or repeated step is safe. An existing target is never
 // overwritten.
 const fs = require('fs-extra');
+const { assertMigrationPath: validatePath } = require('../filesystem/safePath');
 const path = require('path');
 const crypto = require('crypto');
 const { pipeline } = require('stream/promises');
@@ -21,8 +22,9 @@ class MoveError extends Error {
 }
 
 async function statOrNull(filePath) {
+  await validatePath(filePath);
   try {
-    return await fs.stat(filePath);
+    return await fs.lstat(filePath);
   } catch (err) {
     if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null;
     throw err;
@@ -42,6 +44,7 @@ function sameContentFingerprint(a, b) {
 }
 
 async function sha256(filePath) {
+  await validatePath(filePath);
   const hash = crypto.createHash('sha256');
   await pipeline(fs.createReadStream(filePath), hash);
   return hash.digest('hex');
@@ -63,7 +66,10 @@ async function copyVerified(source, target, journal, checkpoint) {
       Object.assign(journal, { sha256: sourceHash, ino: identity.ino, dev: identity.dev });
       await checkpoint();
     }
+    await validatePath(source);
+    await validatePath(target);
     await fs.rename(staged, target);
+    await validatePath(source);
     await fs.unlink(source);
     return sourceHash;
   } catch (err) {
@@ -81,6 +87,8 @@ async function copyVerified(source, target, journal, checkpoint) {
  * @returns {Promise<{action: 'moved'|'already-moved', method?: 'rename'|'copy', sha256?: string}>}
  */
 async function moveFile(source, target, { expectedSize, journal, checkpoint = async () => {} } = {}) {
+  await validatePath(source);
+  await validatePath(target);
   if (path.resolve(source) === path.resolve(target)) return { action: 'already-moved' };
   const [src, dst] = await Promise.all([statOrNull(source), statOrNull(target)]);
   if (!src && dst) {
@@ -98,6 +106,7 @@ async function moveFile(source, target, { expectedSize, journal, checkpoint = as
         await sha256(source) !== journal.sha256 || await sha256(target) !== journal.sha256) {
       throw new MoveError('target-exists', `A file already exists at ${target}`);
     }
+    await validatePath(source);
     await fs.unlink(source);
     return { action: 'already-moved' };
   }
@@ -105,6 +114,8 @@ async function moveFile(source, target, { expectedSize, journal, checkpoint = as
 
   await fs.ensureDir(path.dirname(target));
   try {
+    await validatePath(source);
+    await validatePath(target);
     await fs.rename(source, target);
   } catch (err) {
     if (err.code !== 'EXDEV') throw err;
@@ -119,6 +130,7 @@ async function moveFile(source, target, { expectedSize, journal, checkpoint = as
 
 /** Remove dir only when it is empty; never recursive. Resolves true when removed. */
 async function removeDirIfEmpty(dir) {
+  await validatePath(dir);
   try {
     await fs.rmdir(dir);
     return true;
@@ -128,4 +140,4 @@ async function removeDirIfEmpty(dir) {
   }
 }
 
-module.exports = { MoveError, fingerprint, sameContentFingerprint, sha256, moveFile, removeDirIfEmpty, statOrNull };
+module.exports = { MoveError, fingerprint, sameContentFingerprint, sha256, moveFile, removeDirIfEmpty, statOrNull, validatePath };

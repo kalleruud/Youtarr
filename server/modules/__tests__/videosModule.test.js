@@ -147,7 +147,7 @@ describe('VideosModule', () => {
     jest.doMock('../libraryRootCheck', () => mockLibraryRootCheck);
 
     mockLease = { isActive: jest.fn(() => false), describe: jest.fn(() => 'A library maintenance task is running: x') };
-    jest.doMock('../maintenanceLease', () => mockLease);
+    jest.doMock('../maintenanceLease', () => ({ ...mockLease, trackMethods: (instance) => instance }));
 
     jest.doMock('../nfoGenerator', () => mockNfoGenerator);
 

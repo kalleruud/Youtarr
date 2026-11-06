@@ -39,7 +39,7 @@ describe('FileCheckModule', () => {
     jest.doMock('../libraryRootCheck', () => mockLibraryRootCheck);
     jest.doMock('../configModule', () => ({ directoryPath: '/videos' }));
     mockLease = { isActive: jest.fn(() => false) };
-    jest.doMock('../maintenanceLease', () => mockLease);
+    jest.doMock('../maintenanceLease', () => ({ ...mockLease, trackMethods: (instance) => instance }));
 
     fileCheckModule = require('../fileCheckModule');
   });

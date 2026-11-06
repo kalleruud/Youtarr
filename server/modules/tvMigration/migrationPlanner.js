@@ -16,6 +16,7 @@ const { buildSeasonFolderName } = require('../tvPublication/tvNaming');
 const { isFileForVideo, VIDEO_EXTENSIONS } = require('../filesystem');
 const { checkLibraryRoot, libraryCheckCoversRows } = require('../libraryRootCheck');
 const { fingerprint, statOrNull } = require('./fileMover');
+const { assertSafePath, withSafeRoots } = require('../filesystem/safePath');
 const { describeMediaServers } = require('./userState');
 
 const PLAN_VERSION = 1;
@@ -182,6 +183,7 @@ class MigrationPlanner {
     if (!VIDEO_EXTENSIONS.includes(path.extname(row.filePath).toLowerCase())) {
       throw new SkipError('not-video', 'Only video files move into the TV layout; audio-only downloads stay where they are.');
     }
+    await assertSafePath(row.filePath, context.baseDir);
     const mediaPrint = await fingerprint(row.filePath).catch(() => null);
     if (!mediaPrint) throw new SkipError('missing-media', 'The video file is not on disk.');
 
@@ -201,6 +203,7 @@ class MigrationPlanner {
 
     const show = await this._showFolder(context, channelId, parentDir);
     const seasonDir = path.join(show.parentDir, show.folderName || '_', buildSeasonFolderName(assignment.season));
+    await assertSafePath(seasonDir, context.baseDir);
     if (show.folderName && await tvPublisher.findExistingEpisode(seasonDir, youtubeId)) {
       throw new SkipError('already-published', 'A TV episode file for this video already exists; the movie-layout copy is left in place.');
     }
@@ -237,12 +240,14 @@ class MigrationPlanner {
       if (VIDEO_EXTENSIONS.includes(path.extname(name).toLowerCase())) {
         throw new SkipError('multiple-media', `Another video file for this video is in the same folder (${name}).`);
       }
+      await assertSafePath(source, context.baseDir);
       const print = await fingerprint(source).catch(() => null);
       if (print) leftovers.push({ name, source, fingerprint: print });
     }
 
     const targets = [publication.media.target, publication.episodeNfo.target, ...files.map((file) => file.target)];
     for (const target of targets) {
+      await assertSafePath(target, context.baseDir);
       if (context.targets.has(target)) throw new SkipError('duplicate-target', `Another video in this plan would use ${target}.`);
       if (await statOrNull(target)) throw new SkipError('target-exists', `A file already exists at ${target}.`);
     }
@@ -327,6 +332,9 @@ class MigrationPlanner {
   }
 }
 
-module.exports = new MigrationPlanner();
+const planner = new MigrationPlanner();
+const plan = planner.plan.bind(planner);
+planner.plan = (...args) => withSafeRoots([configModule.directoryPath], () => plan(...args));
+module.exports = planner;
 module.exports.SkipError = SkipError;
 module.exports.formatDateAdded = formatDateAdded;

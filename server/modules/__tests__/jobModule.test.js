@@ -30,6 +30,7 @@ jest.mock('../storageGuard', () => ({
   on: jest.fn()
 }));
 jest.mock('../maintenanceLease', () => ({
+  trackMethods: (instance) => instance,
   isActive: jest.fn(() => false),
   current: jest.fn(() => ({ reason: 'TV library migration is moving files' })),
   describe: jest.fn(() => 'A library maintenance task is running: TV library migration is moving files'),

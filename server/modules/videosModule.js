@@ -910,4 +910,4 @@ class VideosModule {
   }
 }
 
-module.exports = new VideosModule();
+module.exports = maintenanceLease.trackMethods(new VideosModule(), ['backfillVideoMetadata'], ['backfillVideoMetadata']);

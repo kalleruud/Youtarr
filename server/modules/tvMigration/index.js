@@ -176,10 +176,6 @@ class TvMigration {
     if (this.downloadActivityCheck()) {
       throw new TvMigrationError('downloads-active', 'A download is running. Apply the migration once it finishes.');
     }
-    const libraryCheck = await checkLibraryRoot(plan.baseDir);
-    if (await libraryCheckCoversRows(libraryCheck, Video, { removed: false })) {
-      throw new TvMigrationError('library-unavailable', libraryCheck.message);
-    }
 
     const owner = leaseOwner(planId);
     try {
@@ -189,6 +185,10 @@ class TvMigration {
       throw err;
     }
     try {
+      const libraryCheck = await checkLibraryRoot(plan.baseDir);
+      if (await libraryCheckCoversRows(libraryCheck, Video, { removed: false })) {
+        throw new TvMigrationError('library-unavailable', libraryCheck.message);
+      }
       const stale = [];
       for (const item of plan.items) {
         const reason = await executor.staleReason(item);
@@ -314,6 +314,7 @@ class TvMigration {
       try {
         await executor.applyItem(item, {
           itemState,
+          leftoversRoot: this.store.rootDir,
           leftoversDir: this.store.leftoversDir(planId, item.youtubeId),
           createdDocuments,
           verifyChecksums: plan.options.verifyChecksums,
@@ -332,7 +333,7 @@ class TvMigration {
         return;
       }
     }
-    state.followUps = await this._refreshPlaylistFiles(plan);
+    state.followUps = await this.lease.runAsOwner(leaseOwner(planId), () => this._refreshPlaylistFiles(plan));
     state.status = STATUS.APPLIED;
     state.appliedAt = new Date().toISOString();
     state.error = null;
@@ -350,6 +351,7 @@ class TvMigration {
       try {
         await executor.rollbackItem(item, {
           itemState,
+          leftoversRoot: this.store.rootDir,
           leftoversDir: this.store.leftoversDir(planId, item.youtubeId),
           checkpoint: save,
         });
@@ -367,7 +369,7 @@ class TvMigration {
       }
     }
     state.removedDocuments = await executor.removeCreatedDocuments(state.createdDocuments || []);
-    state.followUps = await this._refreshPlaylistFiles(plan);
+    state.followUps = await this.lease.runAsOwner(leaseOwner(planId), () => this._refreshPlaylistFiles(plan));
     state.status = STATUS.ROLLED_BACK;
     state.rolledBackAt = new Date().toISOString();
     await save();

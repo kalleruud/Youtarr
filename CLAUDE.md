@@ -218,6 +218,8 @@ These standards apply when you are authoring new code or doing an explicit rewri
 
 ## Security
 
+- `modules/maintenanceLease.js` tracks library writer lifetimes, including nested and detached download work. Migration acquisition refuses active writers; retry when idle. Register new library writers with `trackMethods`/`runOperation`. Only the current maintenance owner may use `runAsOwner` for its own playlist publication. `modules/filesystem/safePath.js` rejects symlink descendants while allowing configured root symlinks/mounts; migration rechecks paths during execution.
+
 Youtarr shells out to `yt-dlp` and writes files using user-influenced paths, so this section is not optional.
 
 - **Validate untrusted input at route boundaries**. Check types, lengths, and shape before passing anything to modules. Return 400 with `{ error }` for invalid input.

@@ -1174,4 +1174,4 @@ ${excludeClause}        ORDER BY timeCreated ASC
   }
 }
 
-module.exports = new VideoDeletionModule();
+module.exports = maintenanceLease.trackMethods(new VideoDeletionModule(), ['deleteVideoById', 'deleteVideos', 'deleteVideosByYoutubeIds', 'cleanupOrphanDirectories', 'performAutomaticCleanup'], ['deleteVideos', 'deleteVideosByYoutubeIds']);

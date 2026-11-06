@@ -398,3 +398,48 @@ describe('maintenance lease', () => {
     await expect(migration.get('../../etc')).rejects.toMatchObject({ code: 'not-found' });
   });
 });
+
+test.each(['delete', 'subfolder move'])('apply refuses an in-flight %s until its lifetime ends', async () => {
+  const plan = await migration.createPlan();
+  let finish;
+  const writer = lease.runOperation(() => new Promise((resolve) => { finish = resolve; }));
+  await expect(migration.apply(plan.planId, { confirm: true })).rejects.toMatchObject({ code: 'maintenance-active' });
+  expect(lease.current()).toBeNull();
+  finish();
+  await writer;
+  expect((await applyAndWait(plan.planId)).status).toBe('applied');
+});
+
+test('apply refuses a show ancestor replaced by a symlink after preview', async () => {
+  const plan = await migration.createPlan();
+  const outside = path.join(root, 'outside');
+  await fs.ensureDir(outside);
+  await fs.symlink(outside, plan.items[0].showDir);
+  await expect(migration.apply(plan.planId, { confirm: true })).rejects.toMatchObject({ code: 'unsafe-path' });
+  expect(await fs.readdir(outside)).toEqual([]);
+  expect(lease.current()).toBeNull();
+});
+
+test('preview refuses a source ancestor symlink', async () => {
+  const old = path.join(library, 'Show');
+  const outside = path.join(root, 'outside-source');
+  await fs.rename(old, outside);
+  await fs.symlink(outside, old);
+  const plan = await migration.createPlan();
+  expect(plan.items).toEqual([]);
+  expect(plan.skipped.every((item) => item.code === 'unsafe-path')).toBe(true);
+});
+
+test('rollback refuses a redirected original folder without writing outside the library', async () => {
+  const plan = await migration.createPlan();
+  await applyAndWait(plan.planId);
+  const outside = path.join(root, 'outside-rollback');
+  await fs.ensureDir(outside);
+  const nested = plan.items.find((item) => item.youtubeId === NESTED);
+  await fs.symlink(outside, nested.oldDir);
+  await migration.rollback(plan.planId, { confirm: true });
+  await migration.waitForIdle();
+  expect((await migration.get(plan.planId)).status).toBe('interrupted');
+  expect(await fs.readdir(outside)).toEqual([]);
+  expect(lease.isActive()).toBe(true);
+});

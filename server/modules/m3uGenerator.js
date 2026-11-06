@@ -1,3 +1,4 @@
+const maintenanceLease = require('./maintenanceLease');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../logger');
@@ -239,4 +240,4 @@ class M3uGenerator {
   }
 }
 
-module.exports = new M3uGenerator();
+module.exports = maintenanceLease.trackMethods(new M3uGenerator(), ['generatePlaylistM3U', 'generateChannelM3U', 'deleteChannelM3U', 'regenerateAllChannelM3Us']);

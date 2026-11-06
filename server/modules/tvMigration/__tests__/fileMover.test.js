@@ -111,3 +111,16 @@ test('refuses a replaced destination even when its content is identical', async 
   await expect(moveFile(source, target, { journal })).rejects.toMatchObject({ code: 'target-exists' });
   expect(await fs.readFile(source, 'utf8')).toBe('same');
 });
+
+test.each(['source', 'target'])('refuses a %s ancestor redirect without moving bytes', async (side) => {
+  const outside = path.join(root, 'outside');
+  await fs.ensureDir(outside);
+  await fs.outputFile(path.join(root, 'original.mp4'), 'original');
+  await fs.outputFile(path.join(outside, 'media.mp4'), 'outside');
+  await fs.symlink(outside, path.join(root, 'link'));
+  const source = side === 'source' ? path.join(root, 'link', 'media.mp4') : path.join(root, 'original.mp4');
+  const target = side === 'target' ? path.join(root, 'link', 'new.mp4') : path.join(root, 'new.mp4');
+  await expect(moveFile(source, target)).rejects.toMatchObject({ code: 'unsafe-path' });
+  expect(await fs.readFile(path.join(outside, 'media.mp4'), 'utf8')).toBe('outside');
+  expect(await fs.pathExists(path.join(outside, 'new.mp4'))).toBe(false);
+});

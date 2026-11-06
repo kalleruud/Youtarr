@@ -1426,4 +1426,4 @@ class JobModule {
   }
 }
 
-module.exports = new JobModule();
+module.exports = maintenanceLease.trackMethods(new JobModule(), ['backfillFromCompleteList', '_repairFromArchive'], ['backfillFromCompleteList']);

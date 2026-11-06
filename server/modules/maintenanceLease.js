@@ -8,6 +8,7 @@
 // synchronously when this module loads, so a restart in the middle of a
 // migration comes back paused before any startup task runs.
 const EventEmitter = require('events');
+const { AsyncLocalStorage } = require('async_hooks');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -29,6 +30,9 @@ class MaintenanceLease extends EventEmitter {
   constructor({ leasePath = DEFAULT_LEASE_PATH } = {}) {
     super();
     this.leasePath = leasePath;
+    this.operations = new Set();
+    this.operationContext = new AsyncLocalStorage();
+    this.ownerContext = new AsyncLocalStorage();
     this.lease = this._load();
   }
 
@@ -74,6 +78,7 @@ class MaintenanceLease extends EventEmitter {
    * @returns {string} token
    */
   acquire(owner, reason) {
+    if (this.operations.size) throw new MaintenanceActiveError({ reason: 'Library writes are in progress; retry when they finish' });
     if (this.lease && this.lease.owner !== owner) throw new MaintenanceActiveError(this.lease);
     if (this.lease) {
       if (this.lease.reason !== reason) {
@@ -106,6 +111,38 @@ class MaintenanceLease extends EventEmitter {
     logger.info({ owner }, 'Maintenance lease released');
     this.emit('released');
     return true;
+  }
+
+  // Entry and lease acquisition are synchronous: neither can slip between the
+  // other's check and registration. Nested and detached calls each retain their own lifetime.
+  async runOperation(operation) {
+    if (this.lease && this.ownerContext.getStore() === this.lease.token) return operation();
+    const inherited = this.operationContext.getStore();
+    if (!inherited || !this.operations.has(inherited)) this.assertInactive();
+    const token = {};
+    this.operations.add(token);
+    try {
+      return await this.operationContext.run(token, operation);
+    } finally {
+      this.operations.delete(token);
+    }
+  }
+
+  runAsOwner(owner, operation) {
+    if (!this.lease || this.lease.owner !== owner) throw new Error('Maintenance lease ownership required');
+    return this.ownerContext.run(this.lease.token, operation);
+  }
+
+  trackMethods(instance, names, guarded = []) {
+    for (const name of names) {
+      const original = instance[name];
+      instance[name] = (...args) => {
+        // Preserve existing skip/refusal response shapes while maintenance is held.
+        if (this.isActive() && guarded.includes(name)) return original.apply(instance, args);
+        return this.runOperation(() => original.apply(instance, args));
+      };
+    }
+    return instance;
   }
 
   /** Throw MaintenanceActiveError while any lease is held. */

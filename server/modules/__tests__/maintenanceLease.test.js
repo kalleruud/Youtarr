@@ -58,3 +58,44 @@ test('describe names the reason', () => {
   lease.acquire('owner-a', 'TV library migration is moving files');
   expect(lease.describe()).toBe('A library maintenance task is running: TV library migration is moving files');
 });
+
+test('refuses migration throughout a suspended writer and allows retry after failure', async () => {
+  const lease = new MaintenanceLease({ leasePath });
+  let reject;
+  const pending = lease.runOperation(() => new Promise((resolve, fail) => { reject = fail; }));
+  expect(() => lease.acquire('migration', 'move')).toThrow(/writes are in progress/);
+  reject(new Error('delete failed'));
+  await expect(pending).rejects.toThrow('delete failed');
+  expect(lease.acquire('migration', 'move')).toBeTruthy();
+});
+
+test('held migration rejects writer before it starts and release permits entry', async () => {
+  const lease = new MaintenanceLease({ leasePath });
+  const write = jest.fn();
+  lease.acquire('migration', 'move');
+  await expect(lease.runOperation(write)).rejects.toThrow(/maintenance/);
+  expect(write).not.toHaveBeenCalled();
+  lease.release('migration');
+  await lease.runOperation(write);
+  expect(write).toHaveBeenCalledTimes(1);
+});
+
+test('nested detached work remains tracked after its parent returns', async () => {
+  const lease = new MaintenanceLease({ leasePath });
+  let finish;
+  let child;
+  await lease.runOperation(async () => {
+    child = lease.runOperation(() => new Promise((resolve) => { finish = resolve; }));
+  });
+  expect(() => lease.acquire('migration', 'move')).toThrow(/writes are in progress/);
+  finish();
+  await child;
+  expect(lease.acquire('migration', 'move')).toBeTruthy();
+});
+
+test('only the current owner can publish within its held lease', async () => {
+  const lease = new MaintenanceLease({ leasePath });
+  lease.acquire('migration', 'moving');
+  await expect(lease.runAsOwner('migration', () => lease.runOperation(async () => 'published'))).resolves.toBe('published');
+  expect(() => lease.runAsOwner('other', () => {})).toThrow(/ownership/);
+});

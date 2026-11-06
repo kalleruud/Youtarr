@@ -1,3 +1,5 @@
+const configModule = require('../configModule');
+const { withSafeRoots } = require('../filesystem/safePath');
 // Moves one planned video into the TV layout, or back. Every step is
 // idempotent, so an interrupted run resumes by repeating the video it stopped
 // in. Order on apply: show/season/episode NFOs, subtitles and thumbnail, the
@@ -9,7 +11,16 @@ const path = require('path');
 const { Video } = require('../../models');
 const { writeFileAtomic } = require('../tvPublication/tvPublisher');
 const { VIDEO_EXTENSIONS } = require('../filesystem');
-const { moveFile, removeDirIfEmpty, sha256, statOrNull, fingerprint, sameContentFingerprint, MoveError } = require('./fileMover');
+const { moveFile, removeDirIfEmpty, sha256, statOrNull, fingerprint, sameContentFingerprint, validatePath, MoveError } = require('./fileMover');
+
+async function validateItemPaths(item, leftoversDir) {
+  const paths = [item.oldDir, item.media.source, item.media.target,
+    ...item.files.flatMap((file) => [file.source, file.target]),
+    ...item.documents.map((doc) => doc.target),
+    ...item.leftovers.map((file) => file.source),
+    ...(leftoversDir ? item.leftovers.map((file) => leftoverTarget(leftoversDir, file)) : [])];
+  for (const target of paths) await validatePath(target);
+}
 
 class MigrationStepError extends Error {
   constructor(code, message) {
@@ -25,6 +36,7 @@ class MigrationStepError extends Error {
  * @returns {Promise<string|null>} why the plan is stale, or null
  */
 async function staleReason(item) {
+  await validateItemPaths(item);
   const row = await Video.findOne({ where: { youtubeId: item.youtubeId }, attributes: ['filePath', 'removed'] });
   if (!row || row.removed || row.filePath !== item.media.source) return 'its database row changed';
   if (!sameContentFingerprint(await fingerprint(item.media.source).catch(() => null), item.media.fingerprint)) {
@@ -47,6 +59,7 @@ function leftoverTarget(leftoversDir, leftover) {
  * returns, so a crash never loses a finished step.
  */
 async function applyItem(item, { itemState, leftoversDir, createdDocuments, verifyChecksums, checkpoint }) {
+  await validateItemPaths(item, leftoversDir);
   const state = itemState;
   const move = journaledMover(state, checkpoint);
   if (verifyChecksums && !state.sha256Before && await statOrNull(item.media.source)) {
@@ -55,6 +68,7 @@ async function applyItem(item, { itemState, leftoversDir, createdDocuments, veri
   }
 
   for (const doc of item.documents) {
+    await validatePath(doc.target);
     const exists = Boolean(await statOrNull(doc.target));
     if (doc.role === 'episode') {
       if (!exists || state.episodeNfoWritten) {
@@ -62,6 +76,7 @@ async function applyItem(item, { itemState, leftoversDir, createdDocuments, veri
         // rollback remove it.
         state.episodeNfoWritten = true;
         await checkpoint();
+        await validatePath(doc.target);
         await fs.ensureDir(path.dirname(doc.target));
         await writeFileAtomic(doc.target, doc.content);
       }
@@ -72,6 +87,7 @@ async function applyItem(item, { itemState, leftoversDir, createdDocuments, veri
     if (exists) continue;
     createdDocuments.add(doc.target);
     await checkpoint();
+    await validatePath(doc.target);
     await fs.ensureDir(path.dirname(doc.target));
     await writeFileAtomic(doc.target, doc.content);
   }
@@ -114,6 +130,7 @@ async function applyItem(item, { itemState, leftoversDir, createdDocuments, veri
 
 /** Put one item back where planning found it. */
 async function rollbackItem(item, { leftoversDir, checkpoint, itemState }) {
+  await validateItemPaths(item, leftoversDir);
   const move = journaledMover(itemState, checkpoint);
   // Deleted in Youtarr after the migration: there is no file to put back.
   const current = await Video.findOne({ where: { youtubeId: item.youtubeId }, attributes: ['filePath', 'removed'] });
@@ -144,7 +161,10 @@ async function rollbackItem(item, { leftoversDir, checkpoint, itemState }) {
     await moveFileBack(file.target, file.source, file.fingerprint?.size, move);
   }
   const episodeNfo = item.documents.find((doc) => doc.role === 'episode');
-  if (episodeNfo && itemState.episodeNfoWritten) await fs.remove(episodeNfo.target);
+  if (episodeNfo && itemState.episodeNfoWritten) {
+    await validatePath(episodeNfo.target);
+    await fs.remove(episodeNfo.target);
+  }
   itemState.step = 'files-restored';
   await checkpoint();
 }
@@ -181,6 +201,7 @@ async function removeCreatedDocuments(createdDocuments) {
   const removed = [];
   const dirs = new Set();
   for (const target of createdDocuments) {
+    await validatePath(target);
     const dir = path.dirname(target);
     const isShowNfo = path.basename(target) === 'tvshow.nfo';
     const occupied = isShowNfo
@@ -196,4 +217,10 @@ async function removeCreatedDocuments(createdDocuments) {
   return removed;
 }
 
-module.exports = { applyItem, rollbackItem, staleReason, removeCreatedDocuments, MigrationStepError };
+function scoped(operation) {
+  return (...args) => withSafeRoots([configModule.directoryPath, args[1]?.leftoversRoot], () => operation(...args));
+}
+module.exports = {
+  applyItem: scoped(applyItem), rollbackItem: scoped(rollbackItem),
+  staleReason: scoped(staleReason), removeCreatedDocuments: scoped(removeCreatedDocuments), MigrationStepError,
+};

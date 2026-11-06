@@ -2,6 +2,7 @@
 
 // Mock logger before any imports
 jest.mock('../../logger');
+const { MaintenanceLease } = require('../maintenanceLease');
 
 jest.mock('../m3uGenerator', () => ({
   generateChannelM3UInBackground: jest.fn()
@@ -114,10 +115,24 @@ describe('VideoDeletionModule', () => {
       isActive: jest.fn(() => false),
       describe: jest.fn(() => 'A library maintenance task is running: TV library migration'),
     };
+    const trackingLease = new MaintenanceLease({ leasePath: '/tmp/pr27-unused-deletion-test-lease.json' });
+    mockLease.trackMethods = trackingLease.trackMethods.bind(trackingLease);
+    mockLease.trackingLease = trackingLease;
     jest.doMock('../maintenanceLease', () => mockLease);
 
     // Require the module after mocks are in place
     VideoDeletionModule = require('../videoDeletionModule');
+  });
+
+  test('an in-flight delete excludes migration until the awaited library check and delete finish', async () => {
+    let finishCheck;
+    mockCheckLibraryRoot.mockImplementationOnce(() => new Promise((resolve) => { finishCheck = resolve; }));
+    mockVideo.findByPk.mockResolvedValue(null);
+    const deletion = VideoDeletionModule.deleteVideos([1]);
+    expect(() => mockLease.trackingLease.acquire('migration', 'moving')).toThrow(/writes are in progress/);
+    finishCheck({ ok: true });
+    await deletion;
+    expect(mockLease.trackingLease.operations.size).toBe(0);
   });
 
   describe('while a library migration holds the maintenance lease', () => {

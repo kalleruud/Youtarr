@@ -1138,4 +1138,4 @@ class ChannelSettingsModule {
   }
 }
 
-module.exports = new ChannelSettingsModule();
+module.exports = maintenanceLease.trackMethods(new ChannelSettingsModule(), ['moveChannelFolder', 'updateVideoFilePaths'], []);

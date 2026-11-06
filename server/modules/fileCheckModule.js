@@ -202,4 +202,4 @@ class FileCheckModule {
   }
 }
 
-module.exports = new FileCheckModule();
+module.exports = maintenanceLease.trackMethods(new FileCheckModule(), ['checkVideoFiles', 'applyVideoUpdates'], ['checkVideoFiles']);
