@@ -81,3 +81,23 @@ test('status exposes missing dates and corrected dates without allocating', asyn
   mockCatalog = [entry('a', '2021-01-01')];
   expect(await assignments.getStatus('a')).toMatchObject({ status: 'date-correction-review', season: 2020, observedPublishedAt: '2021-01-01T00:00:00.000Z' });
 });
+
+test.each([false, true])('status surfaces conflicting exact duplicate dates regardless of row order (%s)', async reverse => {
+  mockRows.set('a', { youtube_id: 'a', channel_id: 'UC1', season: 2021, episode: 1,
+    published_at: '2021-01-01T00:00:00.000Z', published_at_source: 'exact' });
+  mockCatalog = [entry('a', '2021-01-01'), entry('a', '2022-01-01')];
+  if (reverse) mockCatalog.reverse();
+  expect(await assignments.getStatus('a')).toMatchObject({
+    status: 'date-correction-review', season: 2021, episode: 1,
+    publishedAt: '2021-01-01T00:00:00.000Z', observedPublishedAt: '2022-01-01T00:00:00.000Z',
+  });
+});
+
+test('allocation retries retain the number and expose divergent duplicate observations', async () => {
+  await get('a', '2021-01-01', 'exact');
+  mockCatalog = [entry('a', '2021-01-01'), entry('a', '2022-01-01')];
+  expect(await get('a', '2021-01-01', 'exact')).toMatchObject({
+    status: 'date-correction-review', season: 2021, episode: 1,
+    observedPublishedAt: '2022-01-01T00:00:00.000Z',
+  });
+});

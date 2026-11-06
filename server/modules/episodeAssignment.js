@@ -28,7 +28,7 @@ class EpisodeAssignments {
       .filter(row => dateOf(row.publishedAt, row.published_at_source))
       .sort((a, b) => sourceRank(b.published_at_source) - sourceRank(a.published_at_source) || dateOf(a.publishedAt, a.published_at_source).localeCompare(dateOf(b.publishedAt, b.published_at_source)));
     const observation = catalog[0];
-    if (existing) return this.result(existing, observation?.publishedAt, observation?.published_at_source);
+    if (existing) return this.result(existing, observation?.publishedAt, observation?.published_at_source, catalog);
     return { status: observation ? 'not-assigned' : 'date-required' };
   }
   // Called at the publication seam: the first call allocates the entire known
@@ -71,14 +71,14 @@ class EpisodeAssignments {
       const existing = await EpisodeAssignment.findByPk(youtubeId, { transaction, retry: NO_QUERY_RETRY });
       if (existing) {
         if (existing.channel_id !== channelId) throw new Error('Video is already assigned to another channel');
-        return this.result(existing, observedDate, observedSource);
+        return this.result(existing, observedDate, observedSource, catalog);
       }
       const sorted = [...candidates.values()].sort((a, b) => a.date.localeCompare(b.date) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       const assigned = await EpisodeAssignment.findAll({ where: { channel_id: channelId }, transaction, retry: NO_QUERY_RETRY });
       const claimed = await EpisodeAssignment.findAll({ where: { youtube_id: { [Op.in]: [...candidates.keys()] } }, transaction, retry: NO_QUERY_RETRY });
       const owner = claimed.find(row => row.youtube_id === youtubeId);
       if (owner && owner.channel_id !== channelId) throw new Error('Video is already assigned to another channel');
-      if (owner) return this.result(owner, observedDate, observedSource);
+      if (owner) return this.result(owner, observedDate, observedSource, catalog);
       const ids = new Set(claimed.map(row => row.youtube_id));
       const max = new Map();
       for (const row of assigned) max.set(row.season, Math.max(max.get(row.season) || 0, row.episode));
@@ -93,16 +93,24 @@ class EpisodeAssignments {
         if (candidate.id === youtubeId) target = row;
       }
       if (!target) return { showKey: channelId, season: null, episode: null, assignmentVersion: null, status: 'date-required' };
-      return this.result(target, observedDate, observedSource);
+      return this.result(target, observedDate, observedSource, catalog);
     });
   }
 
-  result(row, publishedAt, source) {
-    const observed = dateOf(publishedAt, source);
+  result(row, publishedAt, source, catalog = []) {
+    const observations = [
+      { publishedAt, published_at_source: source },
+      ...catalog.filter(item => item.youtube_id === row.youtube_id && item.channel_id === row.channel_id),
+    ].map(item => ({ date: dateOf(item.publishedAt, item.published_at_source), source: item.published_at_source }))
+      .filter(item => item.date)
+      .sort((a, b) => sourceRank(b.source) - sourceRank(a.source) || a.date.localeCompare(b.date));
+    const preferredRank = observations[0] && sourceRank(observations[0].source);
+    const observation = observations.find(item => sourceRank(item.source) === preferredRank && item.date !== row.published_at) || observations[0];
+    const observed = observation?.date || null;
     return { showKey: row.channel_id, season: row.season, episode: row.episode,
       assignmentVersion: row.assignment_version, publishedAt: row.published_at,
       publishedAtSource: row.published_at_source, observedPublishedAt: observed,
-      observedPublishedAtSource: observed ? source : null,
+      observedPublishedAtSource: observation?.source || null,
       status: observed && observed !== row.published_at ? 'date-correction-review' : 'assigned' };
   }
 }
