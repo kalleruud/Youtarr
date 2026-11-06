@@ -321,6 +321,7 @@ const createServerModule = ({
         jest.doMock('fs', () => fsMock);
         jest.doMock('multer', () => multerMock);
 
+        jest.doMock('../modules/episodeAssignment', () => ({ getStatus: jest.fn() }));
         const serverModule = require('../server');
 
         state.app = serverModule.app;

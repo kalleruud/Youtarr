@@ -381,3 +381,13 @@ compares string columns across them fail with `Illegal mix of collations`. The
 - **Per Channel**: ~1-2 KB metadata
 - **Per Video**: ~5-10 KB metadata
 - **Growth Rate**: ~10 MB per 1000 videos
+
+### TV episode identity
+
+`episode_shows` locks allocations by the immutable YouTube channel ID, independently of duplicate legacy `channels` rows. `episode_assignments` has one row per YouTube video ID and a unique `(channel_id, season, episode)` index. Both use case-sensitive identity collation. The migration only adds these tables and leaves videos and download history intact; rolling it back discards assignments and must not be done after publication without restoring a matching database backup.
+
+The `episodeAssignment.ensureEpisodeAssignment` publication interface allocates the known channel catalog on its first request, ordered by publication time and then case-sensitive YouTube ID. Later discoveries append to their year without renumbering. Video ID is shared by uploads, Shorts and live replays; channel titles and handles do not participate. The returned `publishedAt` and `publishedAtSource` are the date and provenance used for assignment. Current source observations remain in `channelvideos`.
+
+Missing, invalid, or `estimated` (synthetic ordering) dates return `date-required` with no episode; they must be shown as awaiting a date and not published as a fabricated year. A later differing observation returns `date-correction-review` and retains the original assignment and date: the video details show both dates and a separately designed preview/reassignment is required before moving an episode. No automatic reassignment is implemented. Conflicting ownership of one video ID is an error. TV publication is introduced by #7; this interface alone does not write TV files or change the existing library.
+
+When duplicate catalog rows disagree, status and allocation responses expose a differing observation within the highest-confidence date tier instead of hiding it behind a matching older row. The persisted assignment remains unchanged pending review.

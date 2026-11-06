@@ -17,6 +17,7 @@ import VideoMetadata from './components/VideoMetadata';
 import VideoActions from './components/VideoActions';
 import VideoTechnical from './components/VideoTechnical';
 import VideoWatchStatusSection from './components/VideoWatchStatusSection';
+import EpisodeIdentity from './components/EpisodeIdentity';
 import { useVideoMetadata } from './hooks/useVideoMetadata';
 import { useWatchStatus } from './hooks/useWatchStatus';
 import { useVideoModalActions } from './hooks/useVideoModalActions';
@@ -288,6 +289,7 @@ function VideoModal({
               loading={metadataLoading}
               onAddChannel={canAddChannel ? () => setAddChannelOpen(true) : undefined}
             />
+            <EpisodeIdentity youtubeId={open ? video.youtubeId : ''} token={token} />
             <VideoWatchStatusSection statuses={watchStatuses} />
             <VideoTechnical
               video={displayVideo}

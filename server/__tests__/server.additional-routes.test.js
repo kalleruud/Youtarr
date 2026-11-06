@@ -370,6 +370,7 @@ const createServerModule = ({
 
         jest.doMock('../modules/setupTokenModule', () => setupTokenModuleMock);
 
+        jest.doMock('../modules/episodeAssignment', () => ({ getStatus: jest.fn() }));
         const serverModule = require('../server');
 
         state.app = serverModule.app;

@@ -9,6 +9,8 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { VideoModalData } from '../types';
 
+jest.mock('../components/EpisodeIdentity', () => () => null);
+
 // Mock axios
 jest.mock('axios', () => ({
   get: jest.fn(),
