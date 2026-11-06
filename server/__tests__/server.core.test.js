@@ -303,6 +303,8 @@ const createServerModule = ({
         jest.doMock('pino-http', () => pinoHttpMock);
 
         jest.doMock('../modules/episodeAssignment', () => ({ getStatus: jest.fn() }));
+
+        jest.doMock('../modules/channelArtworkModule', () => ({ isEnabled: jest.fn(() => false), syncChannel: jest.fn(), ArtworkValidationError: class extends Error {} }));
         const serverModule = require('../server');
 
         state.app = serverModule.app;

@@ -53,6 +53,7 @@
   "writeVideoNfoFiles": true,
   "writeVideoFanart": false,
   "writeBackdropImages": false,
+  "tvShowArtwork": false,
   "prefixChannelNameInTitle": true,
   "notificationsEnabled": false,
   "appriseUrls": [],

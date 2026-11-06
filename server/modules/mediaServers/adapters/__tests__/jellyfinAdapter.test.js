@@ -480,4 +480,34 @@ describe('JellyfinAdapter', () => {
       await expect(adapter.fetchWatchStates()).rejects.toBeInstanceOf(MediaServerUnavailableError);
     });
   });
+
+  describe('refreshFolderImages', () => {
+    test('refreshes only the show whose folder name matches, with a full image refresh', async () => {
+      axios.get.mockResolvedValueOnce({ data: { Items: [
+        { Id: 'other', Path: '/media/youtube/Other Channel' },
+        { Id: 'show-1', Path: '/media/youtube/Pawel [UC1]/' },
+      ] } });
+      axios.post.mockResolvedValueOnce({});
+      const result = await new JellyfinAdapter(cfg).refreshFolderImages('/usr/src/app/data/Pawel [UC1]');
+      expect(result.status).toBe('refreshed');
+      expect(axios.post).toHaveBeenCalledWith(
+        'http://jf:8096/Items/show-1/Refresh',
+        null,
+        expect.objectContaining({ params: expect.objectContaining({ imageRefreshMode: 'FullRefresh', replaceAllImages: true, replaceAllMetadata: false }) })
+      );
+    });
+
+    test('reports not-found without refreshing when Jellyfin has not scanned the folder', async () => {
+      axios.get.mockResolvedValue({ data: { Items: [] } });
+      const result = await new JellyfinAdapter(cfg).refreshFolderImages('/data/New Channel');
+      expect(result.status).toBe('not-found');
+      expect(axios.post).not.toHaveBeenCalled();
+    });
+
+    test('reports a failed request instead of rejecting', async () => {
+      axios.get.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 500'), { response: { status: 500 } }));
+      const result = await new JellyfinAdapter(cfg).refreshFolderImages('/data/Channel');
+      expect(result).toEqual({ status: 'failed', message: expect.stringContaining('status code 500') });
+    });
+  });
 });
