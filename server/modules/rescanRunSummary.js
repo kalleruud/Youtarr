@@ -42,7 +42,8 @@ function describe(outcome, result) {
 
 function toRunRecord(result = {}) {
   if (result.skipped) {
-    return { status: 'skipped', outcome: 'skipped', message: 'A rescan was already running.', details: null };
+    const message = result.reason === 'maintenance' && result.message ? `${result.message}.` : 'A rescan was already running.';
+    return { status: 'skipped', outcome: 'skipped', message, details: null };
   }
   let outcome = result.status || (result.timedOut ? 'timed-out' : 'completed');
   // A finished scan with failed row writes, or with rows it could not mark

@@ -45,6 +45,7 @@ describe('VideoDeletionModule', () => {
   let m3uGenerator;
   let playlistOutputRefresh;
   let mockCheckLibraryRoot;
+  let mockLease;
 
   beforeEach(() => {
     jest.resetModules();
@@ -109,8 +110,37 @@ describe('VideoDeletionModule', () => {
       directoryPath: '/test/output'
     }));
 
+    mockLease = {
+      isActive: jest.fn(() => false),
+      describe: jest.fn(() => 'A library maintenance task is running: TV library migration'),
+    };
+    jest.doMock('../maintenanceLease', () => mockLease);
+
     // Require the module after mocks are in place
     VideoDeletionModule = require('../videoDeletionModule');
+  });
+
+  describe('while a library migration holds the maintenance lease', () => {
+    beforeEach(() => {
+      mockLease.isActive.mockReturnValue(true);
+    });
+
+    test('refuses manual deletes by id without touching the database', async () => {
+      const result = await VideoDeletionModule.deleteVideos([1]);
+      expect([result.failed, mockVideo.findByPk.mock.calls.length]).toEqual([
+        [{ videoId: 1, error: 'A library maintenance task is running: TV library migration' }], 0,
+      ]);
+    });
+
+    test('refuses manual deletes by YouTube id', async () => {
+      const result = await VideoDeletionModule.deleteVideosByYoutubeIds(['abc']);
+      expect(result.failed.map((f) => f.youtubeId)).toEqual(['abc']);
+    });
+
+    test('skips the orphan folder sweep', async () => {
+      const result = await VideoDeletionModule.cleanupOrphanDirectories();
+      expect(result.skipped).toEqual({ reason: 'maintenance', message: 'A library maintenance task is running: TV library migration' });
+    });
   });
 
   describe('deleteVideoById', () => {

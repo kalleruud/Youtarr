@@ -117,6 +117,11 @@ describe('rescanRunSummary', () => {
       expect(toRunRecord({ processed: 100 })).toEqual(expect.objectContaining({ outcome: 'completed' }));
     });
 
+    test('reports a scan that was skipped because a library migration was running', () => {
+      expect(toRunRecord({ skipped: true, reason: 'maintenance', message: 'A library maintenance task is running: x' }).message)
+        .toBe('A library maintenance task is running: x.');
+    });
+
     test('reports a scan that was skipped because one was already running', () => {
       expect(toRunRecord({ skipped: true, reason: 'already-running' })).toEqual({
         status: 'skipped',

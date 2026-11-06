@@ -9,6 +9,7 @@ const playlistOutputRefresh = require('./playlistOutputRefresh');
 const storageUsage = require('./storageUsage');
 const { STORED_BYTES_SQL } = storageUsage;
 const storageGuard = require('./storageGuard');
+const maintenanceLease = require('./maintenanceLease');
 const { REMOVAL_REASONS, removedColumns } = require('./videoRemovalState');
 const { checkLibraryRoot, isUnderLibraryCheckPath, libraryCheckCoversRows } = require('./libraryRootCheck');
 
@@ -259,6 +260,8 @@ class VideoDeletionModule {
   // libraryRootCheck). A fresh install with nothing recorded, or an empty
   // subfolder no video is stored in, never blocks. Null when fine.
   async _libraryBlock() {
+    // A library migration is moving files; nothing may be tidied or removed.
+    if (maintenanceLease.isActive()) return { reason: 'maintenance', message: maintenanceLease.describe() };
     const libraryCheck = await checkLibraryRoot(configModule.directoryPath);
     if (!(await libraryCheckCoversRows(libraryCheck, Video, { removed: false }))) return null;
     return { reason: libraryCheck.reason, message: libraryCheck.message };
@@ -273,6 +276,10 @@ class VideoDeletionModule {
   async deleteVideos(videoIds, removal = USER_DELETED_REMOVAL) {
     const deleted = [];
     const failed = [];
+    if (maintenanceLease.isActive()) {
+      const error = maintenanceLease.describe();
+      return { success: videoIds.length === 0, deleted, failed: videoIds.map((videoId) => ({ videoId, error })) };
+    }
     const affectedChannelIds = [];
     const deletedYoutubeIds = [];
     const libraryCheck = videoIds.length > 0 ? await this._checkLibraryForDeletes() : null;
@@ -313,6 +320,10 @@ class VideoDeletionModule {
   async deleteVideosByYoutubeIds(youtubeIds, removal = USER_DELETED_REMOVAL) {
     const deleted = [];
     const failed = [];
+    if (maintenanceLease.isActive()) {
+      const error = maintenanceLease.describe();
+      return { success: youtubeIds.length === 0, deleted, failed: youtubeIds.map((youtubeId) => ({ youtubeId, error })) };
+    }
     const affectedChannelIds = [];
     const libraryCheck = youtubeIds.length > 0 ? await this._checkLibraryForDeletes() : null;
 

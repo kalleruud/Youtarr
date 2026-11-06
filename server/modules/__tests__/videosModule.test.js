@@ -13,6 +13,7 @@ describe('VideosModule', () => {
   let mockSequelize;
   let mockVideo;
   let mockLibraryRootCheck;
+  let mockLease;
   let mockWatchStatusQueries;
   let mockFs;
   let mockConfigModule;
@@ -144,6 +145,9 @@ describe('VideosModule', () => {
       checkLibraryRoot: jest.fn().mockResolvedValue({ ok: true }),
     };
     jest.doMock('../libraryRootCheck', () => mockLibraryRootCheck);
+
+    mockLease = { isActive: jest.fn(() => false), describe: jest.fn(() => 'A library maintenance task is running: x') };
+    jest.doMock('../maintenanceLease', () => mockLease);
 
     jest.doMock('../nfoGenerator', () => mockNfoGenerator);
 
@@ -1217,6 +1221,16 @@ describe('VideosModule', () => {
 
     beforeEach(() => {
       mockVideo.update.mockResolvedValue([1]);
+    });
+
+    test('skips while a library migration holds the maintenance lease', async () => {
+      mockLease.isActive.mockReturnValue(true);
+
+      const result = await VideosModule.backfillVideoMetadata();
+
+      expect([result, mockVideo.findAll.mock.calls.length]).toEqual([
+        { skipped: true, reason: 'maintenance', message: 'A library maintenance task is running: x' }, 0,
+      ]);
     });
 
     test('should backfill video metadata successfully', async () => {

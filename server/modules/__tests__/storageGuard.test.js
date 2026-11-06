@@ -10,6 +10,7 @@ describe('storageGuard', () => {
   let mockStorageUsage;
   let mockNotificationModule;
   let mockMessageEmitter;
+  let mockLease;
   let config;
 
   beforeEach(() => {
@@ -34,8 +35,18 @@ describe('storageGuard', () => {
     jest.doMock('../storageUsage', () => mockStorageUsage);
     jest.doMock('../notificationModule', () => mockNotificationModule);
     jest.doMock('../messageEmitter', () => mockMessageEmitter);
+    mockLease = { isActive: jest.fn(() => false), current: jest.fn(() => ({ reason: 'TV library migration is moving files' })) };
+    jest.doMock('../maintenanceLease', () => mockLease);
 
     storageGuard = require('../storageGuard');
+  });
+
+  test('refuses downloads while a library migration holds the maintenance lease', async () => {
+    mockLease.isActive.mockReturnValue(true);
+    await expect(storageGuard.assertDownloadsAllowed()).rejects.toMatchObject({
+      code: 'DOWNLOADS_PAUSED',
+      message: 'Downloads are paused: TV library migration is moving files',
+    });
   });
 
   afterEach(() => {

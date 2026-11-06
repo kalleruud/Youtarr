@@ -15,6 +15,7 @@ describe('FileCheckModule', () => {
   let mockFs;
   let mockVideo;
   let mockLibraryRootCheck;
+  let mockLease;
 
   beforeEach(() => {
     jest.resetModules();
@@ -37,8 +38,17 @@ describe('FileCheckModule', () => {
     };
     jest.doMock('../libraryRootCheck', () => mockLibraryRootCheck);
     jest.doMock('../configModule', () => ({ directoryPath: '/videos' }));
+    mockLease = { isActive: jest.fn(() => false) };
+    jest.doMock('../maintenanceLease', () => mockLease);
 
     fileCheckModule = require('../fileCheckModule');
+  });
+
+  test('changes no row while a library migration holds the maintenance lease', async () => {
+    mockLease.isActive.mockReturnValue(true);
+    const video = { id: 1, youtubeId: 'a', filePath: '/videos/channel/a.mp4', fileSize: '1', removed: false };
+    const result = await fileCheckModule.checkVideoFiles([video]);
+    expect([result.updates, mockFs.stat.mock.calls.length]).toEqual([[], 0]);
   });
 
   describe('while the downloads folder looks unmounted', () => {
