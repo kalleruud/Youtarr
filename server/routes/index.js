@@ -10,6 +10,8 @@ const createApiKeyRoutes = require('./apikeys');
 const createSubscriptionRoutes = require('./subscriptions');
 const createVideoDetailRoutes = require('./videoDetail');
 const episodeAssignment = require('../modules/episodeAssignment');
+const createAcquisitionPolicyRoutes = require('./acquisitionPolicy');
+const acquisitionPolicyService = require('../modules/acquisition/acquisitionPolicyService');
 const createVideoSearchRoutes = require('./videoSearch');
 const createChannelSearchRoutes = require('./channelSearch');
 const createPlaylistRoutes = require('./playlists');
@@ -135,6 +137,9 @@ function registerRoutes(app, deps) {
 
   // Video detail routes (metadata and streaming)
   app.use(createVideoDetailRoutes({ verifyToken, videoMetadataModule, mediaServers, episodeAssignment }));
+
+  // Acquisition policy routes (stream/download and livestream policies)
+  app.use(createAcquisitionPolicyRoutes({ verifyToken, acquisitionPolicyService }));
 
   // Playlist routes
   app.use(createPlaylistRoutes({ verifyToken, playlistModule, downloadModule, m3uGenerator, mediaServers, models, channelSettingsModule, ratingMapper, subfolderModule, playlistVideoFilters, playlistDownloadModule, storageGuard }));

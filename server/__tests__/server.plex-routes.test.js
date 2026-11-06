@@ -197,6 +197,8 @@ const setupServer = async ({ authEnabled = 'false', passwordHash = null } = {}) 
   jest.doMock('express-rate-limit', () => jest.fn(() => (req, res, next) => next()));
 
   jest.doMock('../modules/episodeAssignment', () => ({ getStatus: jest.fn() }));
+
+  jest.doMock('../modules/acquisition/acquisitionPolicyService', () => ({ AcquisitionPolicyError: class extends Error {} }));
   const serverModule = require('../server');
   await serverModule.initialize();
 
