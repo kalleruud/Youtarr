@@ -234,6 +234,84 @@ class JellyfinAdapter extends BaseAdapter {
     };
   }
 
+  // ---- Library migration (tvMigration) only. Routine watch-status sync
+  // stays read-only; these are called only when a user restores the state a
+  // migration snapshotted.
+
+  /** Every Episode item with its file path, paged: [{ id, path }]. */
+  async listEpisodePaths() {
+    const items = [];
+    for (let startIndex = 0; ; startIndex += WATCH_STATE_PAGE_SIZE) {
+      const params = {
+        userId: this.userId, includeItemTypes: 'Episode', recursive: true, fields: 'Path',
+        sortBy: 'SortName', startIndex, limit: WATCH_STATE_PAGE_SIZE,
+      };
+      const res = await axios.get(`${this.url}/Items`, { headers: this._headers(), params, timeout: REQUEST_TIMEOUT_MS });
+      const page = res.data?.Items || [];
+      for (const item of page) if (item.Path) items.push({ id: item.Id, path: item.Path });
+      if (page.length !== WATCH_STATE_PAGE_SIZE) break;
+    }
+    return items;
+  }
+
+  /**
+   * Playlists each user can see, with their entries in order:
+   * [{ id, name, userId, entries: [{ itemId, path }] }]. A playlist visible
+   * to several users is listed once, under the first of them.
+   */
+  async listUserPlaylists(userIds) {
+    const playlists = new Map();
+    for (const userId of userIds) {
+      const params = { userId, includeItemTypes: 'Playlist', recursive: true };
+      const res = await axios.get(`${this.url}/Items`, { headers: this._headers(), params, timeout: REQUEST_TIMEOUT_MS });
+      for (const playlist of res.data?.Items || []) {
+        if (playlists.has(playlist.Id)) continue;
+        const itemsRes = await axios.get(`${this.url}/Playlists/${encodeURIComponent(playlist.Id)}/Items`, {
+          headers: this._headers(), params: { userId, fields: 'Path' }, timeout: REQUEST_TIMEOUT_MS,
+        });
+        const entries = (itemsRes.data?.Items || []).map((item) => ({ itemId: item.Id, path: item.Path || null }));
+        playlists.set(playlist.Id, { id: playlist.Id, name: playlist.Name || null, userId, entries });
+      }
+    }
+    return [...playlists.values()];
+  }
+
+  /** Item ids currently in a playlist, in order. */
+  async listPlaylistItemIds(playlistId, userId) {
+    const res = await axios.get(`${this.url}/Playlists/${encodeURIComponent(playlistId)}/Items`, {
+      headers: this._headers(), params: { userId }, timeout: REQUEST_TIMEOUT_MS,
+    });
+    return (res.data?.Items || []).map((item) => item.Id);
+  }
+
+  async addPlaylistItems(playlistId, itemIds, userId) {
+    if (itemIds.length === 0) return;
+    await axios.post(`${this.url}/Playlists/${encodeURIComponent(playlistId)}/Items`, null, {
+      headers: this._headers(), params: { ids: itemIds.join(','), userId }, timeout: REQUEST_TIMEOUT_MS,
+    });
+  }
+
+  /**
+   * Write one user's played flag, play count, resume position and last
+   * played date for an item. Jellyfin 10.9+ takes /UserItems/{id}/UserData;
+   * older servers only the /Users/{userId}/Items/{id}/UserData form.
+   */
+  async setUserData(itemId, userId, state) {
+    const body = {
+      Played: Boolean(state.played),
+      PlayCount: Number.isFinite(state.playCount) ? state.playCount : 0,
+      PlaybackPositionTicks: Number.isFinite(state.positionMs) ? Math.round(state.positionMs * TICKS_PER_MS) : 0,
+      ...(state.lastWatchedAt ? { LastPlayedDate: new Date(state.lastWatchedAt).toISOString() } : {}),
+    };
+    const options = { headers: this._headers(), timeout: REQUEST_TIMEOUT_MS };
+    try {
+      await axios.post(`${this.url}/UserItems/${encodeURIComponent(itemId)}/UserData`, body, { ...options, params: { userId } });
+    } catch (err) {
+      if (err.response?.status !== 404) throw err;
+      await axios.post(`${this.url}/Users/${encodeURIComponent(userId)}/Items/${encodeURIComponent(itemId)}/UserData`, body, options);
+    }
+  }
+
   async createPlaylist(name, itemIds, opts = {}) {
     const body = {
       Name: name,

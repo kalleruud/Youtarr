@@ -456,6 +456,7 @@ const createServerModule = ({
         jest.doMock('../modules/setupTokenModule', () => setupTokenModuleMock);
         jest.doMock('../modules/episodeAssignment', () => ({ getStatus: jest.fn() }));
         jest.doMock('../modules/tvPublication', () => ({ isEnabled: jest.fn(() => false), regenerateMetadata: jest.fn() }));
+        jest.doMock('../modules/tvMigration', () => ({ setDownloadActivityCheck: jest.fn(), initialize: jest.fn().mockResolvedValue(undefined), list: jest.fn() }));
         jest.doMock('../modules/channelArtworkModule', () => ({ isEnabled: jest.fn(() => false), syncChannel: jest.fn(), ArtworkValidationError: class extends Error {} }));
 
         const serverModule = require('../server');

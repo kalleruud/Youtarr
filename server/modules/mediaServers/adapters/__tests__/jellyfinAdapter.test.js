@@ -510,4 +510,53 @@ describe('JellyfinAdapter', () => {
       expect(result).toEqual({ status: 'failed', message: expect.stringContaining('status code 500') });
     });
   });
+
+  describe('library migration helpers', () => {
+    test('setUserData writes played, count, position in ticks and last played date', async () => {
+      axios.post.mockResolvedValueOnce({});
+      await new JellyfinAdapter(cfg).setUserData('item1', 'u1', { played: false, playCount: 1, positionMs: 61000, lastWatchedAt: '2026-01-01T00:00:00.000Z' });
+      expect(axios.post.mock.calls[0].slice(0, 2)).toEqual(['http://jf:8096/UserItems/item1/UserData', {
+        Played: false, PlayCount: 1, PlaybackPositionTicks: 610000000, LastPlayedDate: '2026-01-01T00:00:00.000Z',
+      }]);
+    });
+
+    test('setUserData falls back to the pre-10.9 endpoint on 404', async () => {
+      axios.post.mockRejectedValueOnce(Object.assign(new Error('nf'), { response: { status: 404 } })).mockResolvedValueOnce({});
+      await new JellyfinAdapter(cfg).setUserData('item1', 'u1', { played: true, playCount: 1 });
+      expect(axios.post.mock.calls[1][0]).toBe('http://jf:8096/Users/u1/Items/item1/UserData');
+    });
+
+    test('setUserData rethrows other failures', async () => {
+      axios.post.mockRejectedValueOnce(Object.assign(new Error('denied'), { response: { status: 403 } }));
+      await expect(new JellyfinAdapter(cfg).setUserData('item1', 'u1', { played: true })).rejects.toThrow('denied');
+    });
+
+    test('listEpisodePaths pages through episodes', async () => {
+      const fullPage = Array.from({ length: 1000 }, (_, i) => ({ Id: `e${i}`, Path: `/tv/${i}.mp4` }));
+      axios.get.mockResolvedValueOnce({ data: { Items: fullPage } }).mockResolvedValueOnce({ data: { Items: [{ Id: 'last', Path: '/tv/last.mp4' }] } });
+      const items = await new JellyfinAdapter(cfg).listEpisodePaths();
+      expect([items.length, axios.get.mock.calls[1][1].params.startIndex]).toEqual([1001, 1000]);
+    });
+
+    test('listUserPlaylists lists each playlist once with its entry paths', async () => {
+      axios.get
+        .mockResolvedValueOnce({ data: { Items: [{ Id: 'p1', Name: 'Mine' }] } })
+        .mockResolvedValueOnce({ data: { Items: [{ Id: 'i1', Path: '/m/a [x].mp4' }] } })
+        .mockResolvedValueOnce({ data: { Items: [{ Id: 'p1', Name: 'Mine' }] } });
+      expect(await new JellyfinAdapter(cfg).listUserPlaylists(['u1', 'u2'])).toEqual([
+        { id: 'p1', name: 'Mine', userId: 'u1', entries: [{ itemId: 'i1', path: '/m/a [x].mp4' }] },
+      ]);
+    });
+
+    test('addPlaylistItems sends the ids as one comma list', async () => {
+      axios.post.mockResolvedValueOnce({});
+      await new JellyfinAdapter(cfg).addPlaylistItems('p1', ['a', 'b'], 'u1');
+      expect(axios.post.mock.calls[0][2].params).toEqual({ ids: 'a,b', userId: 'u1' });
+    });
+
+    test('addPlaylistItems does nothing for an empty list', async () => {
+      await new JellyfinAdapter(cfg).addPlaylistItems('p1', [], 'u1');
+      expect(axios.post).not.toHaveBeenCalled();
+    });
+  });
 });

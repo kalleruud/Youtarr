@@ -268,6 +268,14 @@ const initialize = async () => {
     // Runs left "running" by the previous process never finished; close them
     // out before any timer fires, then start recording this process's runs.
     await scheduledTaskRuns.markInterruptedRuns();
+    // A TV library migration the previous process left mid-run is marked
+    // interrupted; its maintenance lease (read from disk) keeps downloads and
+    // cleanup paused until it is resumed or rolled back.
+    const tvMigration = require('./modules/tvMigration');
+    tvMigration.setDownloadActivityCheck(() => jobModule.getInProgressJobId() !== null);
+    await tvMigration.initialize().catch((err) => {
+      logger.error({ err }, 'Could not check for interrupted TV library migrations');
+    });
     scheduledTaskManager.setRunRecorder(scheduledTaskRuns);
     tabVideoCounts.setRunHistory(scheduledTaskRuns);
     tabVideoCounts.setDownloadActivityCheck(() => jobModule.getInProgressJobId() !== null);
