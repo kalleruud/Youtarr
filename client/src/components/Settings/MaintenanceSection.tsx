@@ -8,6 +8,7 @@ import { useRescanStatus } from '../../hooks/useRescanStatus';
 import { formatDateTime } from '../../utils/formatters';
 import { REMOVED_VIDEOS_ANCHOR } from '../../utils/videoRemoval';
 import RemovedVideosCard from './components/RemovedVideosCard';
+import TvLibraryMigrationCard from './components/TvLibraryMigrationCard';
 
 interface MaintenanceSectionProps {
   token: string | null;
@@ -96,6 +97,8 @@ export function MaintenanceSection({ token, config }: MaintenanceSectionProps) {
         rescanRunning={running}
       />
     </section>
+
+    <TvLibraryMigrationCard token={token} />
     </div>
   );
 }
