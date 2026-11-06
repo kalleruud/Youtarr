@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const { normalizeCaptionTrack } = require('./captionNormalizer');
+const logger = require('../../logger');
 
 function formatTime(ms) {
   const hours = Math.floor(ms / 3600000);
@@ -32,7 +33,9 @@ async function retainCaption(realBackup, bytes) {
   return retainedPath;
 }
 
-async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance, timeline, timingMap, source, destinationPath = subtitlePath }) {
+// Publishes in place: the caller moves the file to the library with the
+// rest of the download, so a skipped or failed run leaves yt-dlp's track.
+async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance, timeline, timingMap, source, youtubeId }) {
   if (!['automatic', 'human'].includes(provenance)) return { status: 'skipped', reason: 'caption provenance is not known to be automatic' };
   if (timeline !== 'final' && !(timeline === 'source' && timingMap)) {
     return { status: 'skipped', reason: 'final media timeline is not verified' };
@@ -44,8 +47,8 @@ async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance,
     const originalBytes = await fs.readFile(subtitlePath);
     const original = new TextDecoder('utf-8', { fatal: true }).decode(originalBytes);
     const result = normalizeCaptionTrack({ rawTrack: source ?? original, format: 'srt', provenance, timingMap: timeline === 'source' ? timingMap : undefined });
-    if (destinationPath === subtitlePath && !result.diagnostics.transitionsRemoved && timeline === 'final') return { status: 'unchanged', diagnostics: result.diagnostics };
-    const serialized = provenance === 'human' && timeline === 'final' ? original : serializeSrt(result.cues);
+    if (!result.diagnostics.transitionsRemoved && timeline === 'final') return { status: 'unchanged', diagnostics: result.diagnostics };
+    const serialized = serializeSrt(result.cues);
     normalizeCaptionTrack({ rawTrack: serialized, format: 'srt', provenance: 'unknown' });
     const realMedia = await fs.realpath(mediaRoot);
     let ancestor = path.resolve(backupRoot);
@@ -65,19 +68,12 @@ async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance,
     if (isWithin(realMedia, realBackup)) throw new Error('Caption backup directory is inside media root');
     const backupPath = await retainCaption(realBackup, originalBytes);
     if (source != null) await retainCaption(realBackup, Buffer.from(source, 'utf8'));
-    let destinationBytes;
-    if (destinationPath !== subtitlePath) {
-      try { destinationBytes = await fs.readFile(destinationPath); } catch (err) {
-        if (err.code !== 'ENOENT') throw err;
-      }
-      if (destinationBytes) await retainCaption(realBackup, destinationBytes);
-    }
-    await fs.mkdir(path.dirname(destinationPath), { recursive: true });
-    temporaryPath = path.join(path.dirname(destinationPath), `.caption-${crypto.randomBytes(16).toString('hex')}.tmp`);
+    temporaryPath = path.join(path.dirname(subtitlePath), `.caption-${crypto.randomBytes(16).toString('hex')}.tmp`);
     await fs.writeFile(temporaryPath, serialized, { flag: 'wx', mode: originalStat.mode & 0o777 });
     await fs.chmod(temporaryPath, originalStat.mode & 0o777);
-    await fs.rename(temporaryPath, destinationPath);
+    await fs.rename(temporaryPath, subtitlePath);
     temporaryPath = null;
+    logger.info({ youtubeId, subtitlePath, backupPath }, '[Post-Process] Published normalized caption; original retained');
     return { status: 'published', backupPath, diagnostics: result.diagnostics };
   } catch (err) {
     return { status: 'warning', reason: 'caption normalization or publication failed', error: err };

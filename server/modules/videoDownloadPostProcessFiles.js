@@ -811,7 +811,6 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           logger.warn({ err, videoDirectory }, '[Post-Process] Subtitle pruning failed; keeping every subtitle file');
         }
 
-        const protectedCaptions = new Set();
         const contract = process.argv[3] || '';
         const cutMatch = /^managed-caption-cuts-([a-f0-9]+)$/.exec(contract);
         let actualDuration;
@@ -835,11 +834,12 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
               timeline: cutCaptions ? 'source' : resolveCaptionTimeline({ contract, state: captionState, videoPath, fileName: file, youtubeId: id }),
               source: cutCaptions?.source,
               timingMap: cutCaptions?.timingMap,
-              destinationPath: path.join(targetVideoDirectory, file),
+              youtubeId: id,
             });
-          if (result.status === 'published' || ((result.status === 'warning' || result.status === 'skipped') && await fs.pathExists(path.join(targetVideoDirectory, file)))) protectedCaptions.add(file);
+          // Captions are published in place, so the move below carries either
+          // the normalized track or, when skipped, yt-dlp's own track for this download.
           if (result.status === 'warning' || result.status === 'skipped') {
-            logger.warn({ subtitlePath, reason: result.reason, err: result.error }, '[Post-Process] Caption normalization skipped');
+            logger.warn({ subtitlePath, reason: result.reason, err: result.error }, '[Post-Process] Caption normalization skipped; publishing the downloaded caption unchanged');
           }
         }
 
@@ -849,7 +849,6 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           const allFilesInDir = await fs.readdir(videoDirectory);
           const updatedFilesInDir = allFilesInDir.filter(file => isFileForVideo(file, id));
           for (const file of updatedFilesInDir) {
-            if (protectedCaptions.has(file)) continue;
             const srcPath = path.join(videoDirectory, file);
             const destPath = path.join(targetVideoDirectory, file);
             // Overwrite if the file already exists at destination
@@ -871,17 +870,13 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           // Check if target video directory already exists (rare, but handle gracefully)
           const targetExists = await fs.pathExists(targetVideoDirectory);
 
-          if (targetExists || protectedCaptions.size) {
-            // Merge files without deleting the existing directory: a rejected
-            // caption must leave its prior playable destination untouched.
-            await ensureDirWithRetries(targetVideoDirectory, { retries: 5, delayMs: 500 });
-            for (const file of await fs.readdir(videoDirectory)) {
-              if ((isFlatMode && !isFileForVideo(file, id)) || protectedCaptions.has(file)) continue;
-              await moveWithRetries(path.join(videoDirectory, file), path.join(targetVideoDirectory, file), { retries: 5, delayMs: 500 });
-            }
-          } else {
-            await moveWithRetries(videoDirectory, targetVideoDirectory, { retries: 5, delayMs: 500 });
+          if (targetExists) {
+            logger.warn({ targetVideoDirectory }, '[Post-Process] Target directory already exists, removing before move');
+            await fs.remove(targetVideoDirectory);
           }
+
+          // Move the entire video directory from temp to final location (with retries for NFS/cross-filesystem transient errors)
+          await moveWithRetries(videoDirectory, targetVideoDirectory, { retries: 5, delayMs: 500 });
 
           // Update paths to reflect final locations
           finalVideoPath = path.join(targetVideoDirectory, videoFileName);

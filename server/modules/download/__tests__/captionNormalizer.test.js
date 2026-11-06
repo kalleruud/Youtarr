@@ -99,3 +99,8 @@ test('rejects overlapping destination segments in a timing map', () => {
   const timingMap = [{ sourceStart: 0, sourceEnd: 1000, destStart: 0 }, { sourceStart: 0, sourceEnd: 1000, destStart: 500 }];
   expect(() => normalizeCaptionTrack({ rawTrack: rolling, format: 'srt', timingMap })).toThrow('Invalid timing map');
 });
+
+test('drops blank and whitespace-only lines inside a cue', () => {
+  const input = '1\n00:00:00,000 --> 00:00:01,000\nFirst\n \t\nSecond\n\n2\n00:00:01,000 --> 00:00:02,000\nThird';
+  expect(normalize(input).cues.map(cue => cue.text)).toEqual(['First\nSecond', 'Third']);
+});

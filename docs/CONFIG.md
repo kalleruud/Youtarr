@@ -184,7 +184,7 @@ Youtarr must be running at the scheduled time; missed occurrences are not replay
 - **Type**: `boolean`
 - **Default**: `false`
 - **Description**: Download subtitles/closed captions with videos
-- **Normalization**: Recognized rolling automatic captions are normalized at download finalization. Originals are retained outside the media library under the jobs directory. When caption origin or timing cannot be verified, Youtarr keeps the existing playable track and logs a warning.
+- **Normalization**: Recognized rolling automatic captions are normalized at download finalization. Originals are retained outside the media library under the jobs directory (`caption-originals`), and their location is logged. When caption origin or timing cannot be verified, or normalization fails, the caption yt-dlp downloaded is published unchanged, replacing any earlier caption at the destination, and a warning is logged.
 
 ### Subtitle Languages
 - **Config Key**: `subtitleLanguage`
@@ -388,7 +388,7 @@ Sync is one-way (server -> Youtarr). Non-owner Plex users come from the server's
 - **Default**: `false`
 - **Description**: Only applies when SponsorBlock Action is `remove`. When enabled, yt-dlp is passed `--force-keyframes-at-cuts`, so segments are cut exactly at the SponsorBlock ranges instead of at the nearest keyframes.
 - **Effect on media**: This re-encodes the whole file, video **and** audio, with FFmpeg's default encoders. The codecs can change (for example VP9/Opus can become H.264/Vorbis), processing takes noticeably longer, and quality can be reduced.
-- **Effect on captions**: With removal enabled and this setting off, cuts land on keyframes, so Youtarr cannot verify the final caption timing. Rolling-caption normalization is then skipped with a warning and the downloaded caption is kept as yt-dlp wrote it (an existing caption at the destination is left in place). With this setting on, Youtarr maps the pre-cut captions through the SponsorBlock cut ranges and checks the result against the media duration before publishing.
+- **Effect on captions**: With removal enabled and this setting off, cuts land on keyframes, so Youtarr cannot verify the final caption timing. Rolling-caption normalization is then skipped with a warning and the caption yt-dlp downloaded is published unchanged, as before this feature. With this setting on, Youtarr maps the pre-cut captions through the SponsorBlock cut ranges and checks them against the cut file's length (ffprobe) before publishing; because yt-dlp reports whole-second durations, the check allows 1 second, the same tolerance yt-dlp uses for its own cut check.
 
 ### SponsorBlock API URL
 - **Config Key**: `sponsorblockApiUrl`

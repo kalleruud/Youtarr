@@ -832,24 +832,20 @@ describe('videoDownloadPostProcessFiles', () => {
         await settleAsync();
         expect(logger.warn).toHaveBeenCalledWith(
           expect.objectContaining({ subtitlePath: `${tempVideoDir}/${autoSrt}`, reason: expect.stringContaining('provenance') }),
-          '[Post-Process] Caption normalization skipped'
+          '[Post-Process] Caption normalization skipped; publishing the downloaded caption unchanged'
         );
       });
 
-      it('skips normalization and keeps the existing destination for SponsorBlock removal without accurate cuts', async () => {
-        const { moveWithRetries } = require('../filesystem');
-        const destination = `/library/Channel/${autoSrt}`;
+      it('warns that SponsorBlock removal without accurate cuts publishes the caption unchanged', async () => {
         setupTempDownloadWithSubtitles({ subtitlesEnabled: true });
         process.argv = ['node', 'script', tempVideoPath, 'inexact-caption-cuts', 'a'.repeat(32)];
-        fs.existsSync.mockImplementation((file) => file === tempJsonPath || file === finalVideoPath || file === `${tempVideoDir}/${autoSrt}`);
-        fs.pathExists.mockImplementation(async (file) => file === destination);
+        fs.existsSync.mockImplementation((file) => file === tempJsonPath || file === finalVideoPath || file === `${tempVideoDir}/${uploadedSrt}`);
         await loadModule();
         await settleAsync();
         expect(logger.warn).toHaveBeenCalledWith(
-          expect.objectContaining({ subtitlePath: `${tempVideoDir}/${autoSrt}`, reason: expect.stringContaining('accurate cuts') }),
-          '[Post-Process] Caption normalization skipped'
+          expect.objectContaining({ subtitlePath: `${tempVideoDir}/${uploadedSrt}`, reason: expect.stringContaining('accurate cuts') }),
+          '[Post-Process] Caption normalization skipped; publishing the downloaded caption unchanged'
         );
-        expect(moveWithRetries).not.toHaveBeenCalledWith(`${tempVideoDir}/${autoSrt}`, destination, expect.any(Object));
       });
 
       it('leaves every subtitle file alone when custom yt-dlp args choose the subtitle languages', async () => {
@@ -1893,19 +1889,75 @@ describe('videoDownloadPostProcessFiles', () => {
       );
     });
 
-    it('keeps non-video sidecars when merging an existing nested destination', async () => {
+    it('replaces an existing nested destination so stale sidecars do not survive', async () => {
       Channel.findOne.mockResolvedValue({ ...trackedChannel, skip_video_folder: false });
       fs.pathExists.mockImplementation(async p => p === '/library/Channel/Video Title - abc123');
-      fs.readdir.mockResolvedValue(['Video Title [abc123].mp4', 'poster.jpg']);
+
+      await loadModule();
+      await settleAsync();
+
+      expect(fs.remove).toHaveBeenCalledWith('/library/Channel/Video Title - abc123');
+    });
+
+    it('moves the whole temp folder into a replaced nested destination', async () => {
+      Channel.findOne.mockResolvedValue({ ...trackedChannel, skip_video_folder: false });
+      fs.pathExists.mockImplementation(async p => p === '/library/Channel/Video Title - abc123');
 
       await loadModule();
       await settleAsync();
 
       expect(moveWithRetries).toHaveBeenCalledWith(
-        '/tmp/youtarr-downloads/Channel/Video Title - abc123/poster.jpg',
-        '/library/Channel/Video Title - abc123/poster.jpg',
+        '/tmp/youtarr-downloads/Channel/Video Title - abc123',
+        '/library/Channel/Video Title - abc123',
         expect.any(Object)
       );
+    });
+
+    describe('caption publication with an existing destination caption', () => {
+      const srt = 'Video Title [abc123].en.srt';
+      const tempSrt = `/tmp/youtarr-downloads/Channel/Video Title - abc123/${srt}`;
+      const destination = `/library/Channel/${srt}`;
+
+      function setupExistingDestination(contract = 'managed-caption-v1') {
+        Channel.findOne.mockResolvedValue({ ...trackedChannel, skip_video_folder: true });
+        process.argv = ['node', 'script', tempVideoPath, contract, 'a'.repeat(32)];
+        fs.readdir.mockResolvedValue(['Video Title [abc123].mp4', srt]);
+        fs.existsSync.mockImplementation((p) => p === tempJsonPath || p === tempSrt || p.startsWith('/library/'));
+        fs.pathExists.mockImplementation(async (p) => p === destination);
+      }
+
+      async function runWithPublishResult(result) {
+        const publishCaption = jest.fn(async () => result);
+        jest.doMock('../download/captionPublication', () => ({ publishCaption }));
+        try {
+          await loadModule();
+          await settleAsync();
+        } finally {
+          jest.dontMock('../download/captionPublication');
+        }
+        return publishCaption;
+      }
+
+      it('replaces the destination with this download\'s caption when normalization is skipped', async () => {
+        setupExistingDestination('inexact-caption-cuts');
+        await loadModule();
+        await settleAsync();
+        expect(fs.remove).toHaveBeenCalledWith(destination);
+        expect(moveWithRetries).toHaveBeenCalledWith(tempSrt, destination, expect.any(Object));
+      });
+
+      it('replaces the destination with this download\'s caption when publication fails', async () => {
+        setupExistingDestination();
+        await runWithPublishResult({ status: 'warning', reason: 'caption normalization or publication failed' });
+        expect(moveWithRetries).toHaveBeenCalledWith(tempSrt, destination, expect.any(Object));
+      });
+
+      it('publishes the normalized caption in place so the move carries it to the destination', async () => {
+        setupExistingDestination();
+        const publishCaption = await runWithPublishResult({ status: 'published', backupPath: '/mock/jobs/caption-originals/x.srt' });
+        expect(publishCaption).toHaveBeenCalledWith(expect.objectContaining({ subtitlePath: tempSrt, youtubeId: 'abc123' }));
+        expect(moveWithRetries).toHaveBeenCalledWith(tempSrt, destination, expect.any(Object));
+      });
     });
 
     it('hoists files flat into the channel folder when the channel chose skip_video_folder=true', async () => {

@@ -1,6 +1,8 @@
 const { isFileForVideo } = require('../filesystem/pathBuilder');
 const path = require('path');
 
+const DURATION_TOLERANCE_MS = 1000;
+
 function resolveCaptionProvenance({ fileName, youtubeId, info }) {
   if (!isFileForVideo(fileName, youtubeId)) return 'unknown';
   const match = /\]\.([A-Za-z0-9-]+)\.srt$/i.exec(fileName);
@@ -51,11 +53,22 @@ function resolveCutCaptions({ state, videoPath, fileName, youtubeId, info, categ
     if (last && cut.start <= last.end) last.end = Math.max(last.end, cut.end);
     else merged.push({ ...cut });
   }
+  // yt-dlp's duration is whole seconds while the media is not: SponsorBlock
+  // clamps segment ends to it, and ModifyChapters treats lengths within 1 s as
+  // the same video (`_duration_mismatch(..., 1)`). The cut positions themselves
+  // are exact with accurate cuts, so the source length is taken from the cut
+  // file (ffprobe length + removed time) and only has to agree with yt-dlp's
+  // duration within that same 1 s; a cut map that does not match the file is
+  // off by whole segments and is rejected.
   const duration = Math.round(info.duration * 1000);
-  if (!Number.isSafeInteger(duration) || duration <= 0 || merged.some(cut => cut.end > duration)) return null;
+  if (!Number.isSafeInteger(duration) || duration <= 0) return null;
+  if (merged.some(cut => cut.end > duration + DURATION_TOLERANCE_MS)) return null;
+  for (const cut of merged) cut.end = Math.min(cut.end, duration);
+  if (merged.some(cut => cut.end <= cut.start)) return null;
   const removed = merged.reduce((sum, cut) => sum + cut.end - cut.start, 0);
-  if (Math.abs(Math.round(state.duration * 1000) - (duration - removed)) > 100) return null;
-  if (Math.abs(Math.round(actualDuration * 1000) - (duration - removed)) > 100) return null;
+  const sourceDuration = Math.round(actualDuration * 1000) + removed;
+  if (Math.abs(sourceDuration - duration) > DURATION_TOLERANCE_MS) return null;
+  if (Math.abs(Math.round(state.duration * 1000) - (duration - removed)) > DURATION_TOLERANCE_MS) return null;
   const timingMap = [];
   let sourceStart = 0;
   let destStart = 0;
@@ -66,7 +79,7 @@ function resolveCutCaptions({ state, videoPath, fileName, youtubeId, info, categ
     }
     sourceStart = cut.end;
   }
-  if (sourceStart < duration) timingMap.push({ sourceStart, sourceEnd: duration, destStart });
+  if (sourceStart < sourceDuration) timingMap.push({ sourceStart, sourceEnd: sourceDuration, destStart });
   return timingMap.length ? { source: sub.data, timingMap } : null;
 }
 

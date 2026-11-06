@@ -19,8 +19,33 @@ describe('cut timing evidence', () => {
   test('maps kept source ranges onto the verified final duration', () => {
     expect(resolveCutCaptions(input)).toEqual({ source: 'source', timingMap: [
       { sourceStart: 0, sourceEnd: 2000, destStart: 0 },
-      { sourceStart: 4000, sourceEnd: 6000, destStart: 2000 },
+      { sourceStart: 4000, sourceEnd: 6038, destStart: 2000 },
     ] });
+  });
+  const realistic = (chapters, actualDuration, stateDuration) => ({
+    ...input, info: { duration: 212 }, actualDuration,
+    state: { ...input.state, duration: stateDuration, sponsorblock_chapters: chapters },
+  });
+  test('accepts a fractional media length against whole-second metadata', () => {
+    const result = resolveCutCaptions(realistic([{ category: 'sponsor', start_time: 60, end_time: 90 }], 182.43, 182));
+    expect(result.timingMap).toEqual([
+      { sourceStart: 0, sourceEnd: 60000, destStart: 0 },
+      { sourceStart: 90000, sourceEnd: 212430, destStart: 60000 },
+    ]);
+  });
+  test('accepts an outro cut ending at the whole-second duration', () => {
+    const result = resolveCutCaptions(realistic([{ category: 'sponsor', start_time: 200, end_time: 212 }], 200.43, 200));
+    expect(result.timingMap).toEqual([
+      { sourceStart: 0, sourceEnd: 200000, destStart: 0 },
+      { sourceStart: 212000, sourceEnd: 212430, destStart: 200000 },
+    ]);
+  });
+  test('maps a video without matching segments one to one', () => {
+    const result = resolveCutCaptions(realistic([{ category: 'intro', start_time: 0, end_time: 5 }], 212.43, 212));
+    expect(result.timingMap).toEqual([{ sourceStart: 0, sourceEnd: 212430, destStart: 0 }]);
+  });
+  test('rejects a cut map several seconds away from the final media length', () => {
+    expect(resolveCutCaptions(realistic([{ category: 'sponsor', start_time: 60, end_time: 90 }], 176.4, 182))).toBeNull();
   });
   test.each([
     { state: { ...input.state, duration: 6 } },
@@ -39,7 +64,7 @@ describe('cut timing evidence', () => {
     ] };
     expect(resolveCutCaptions({ ...input, state }).timingMap).toEqual([
       { sourceStart: 0, sourceEnd: 2000, destStart: 0 },
-      { sourceStart: 4000, sourceEnd: 6000, destStart: 2000 },
+      { sourceStart: 4000, sourceEnd: 6038, destStart: 2000 },
     ]);
   });
 });

@@ -41,7 +41,8 @@ function parseTextTrack(rawTrack, format) {
           i = next;
           break;
         }
-        if (textLines.length) textLines.push('');
+        // A blank line ends an SRT cue in strict parsers, so blank or
+        // whitespace-only lines inside a cue are dropped rather than kept.
         i = next;
         continue;
       }

@@ -1,6 +1,8 @@
 const fs = require('fs').promises;
 const os = require('os');
 const path = require('path');
+jest.mock('../../../logger', () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }));
+const logger = require('../../../logger');
 const { publishCaption } = require('../captionPublication');
 
 const original = '1\n00:00:00,000 --> 00:00:01,000\nOne\n\n2\n00:00:01,000 --> 00:00:01,010\nOne\n\n3\n00:00:01,010 --> 00:00:02,000\nOne\nTwo\n';
@@ -83,19 +85,14 @@ test('preserves the sidecar permissions for media-server readers', async () => {
 });
 
 
-test('copies human captions without removing rolling-shaped speech', async () => {
-  const destinationPath = path.join(mediaRoot, 'destination.srt');
-  expect((await publish({ provenance: 'human', destinationPath })).status).toBe('published');
-  expect((await fs.readFile(destinationPath, 'utf8')).trim()).toBe(original.trim());
+test('leaves human captions with rolling-shaped speech unchanged', async () => {
+  expect((await publish({ provenance: 'human' })).status).toBe('unchanged');
+  expect(await fs.readFile(subtitlePath, 'utf8')).toBe(original);
 });
 
-test('atomically replaces an existing destination and retains both originals', async () => {
-  const destinationPath = path.join(mediaRoot, 'destination.srt');
-  await fs.writeFile(destinationPath, 'prior playable captions');
-  expect((await publish({ destinationPath })).status).toBe('published');
-  const backups = await Promise.all((await fs.readdir(backupRoot)).map(file => fs.readFile(path.join(backupRoot, file), 'utf8')));
-  expect(backups.sort()).toEqual([original, 'prior playable captions'].sort());
-  expect(await fs.readFile(destinationPath, 'utf8')).toContain('Two');
+test('logs the retained original with the YouTube id', async () => {
+  const result = await publish({ youtubeId: 'abc123' });
+  expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ youtubeId: 'abc123', backupPath: result.backupPath }), expect.any(String));
 });
 
 test('uses the pre-cut captions with the verified cut map', async () => {
@@ -106,16 +103,4 @@ test('uses the pre-cut captions with the verified cut map', async () => {
   const output = await fs.readFile(subtitlePath, 'utf8');
   expect(output).not.toContain('removed');
   expect(output).toContain('00:00:02,200 --> 00:00:02,600\ntwo');
-});
-
-test.each(['malformed', 'backup', 'rename'])('preserves an existing destination after %s failure', async failure => {
-  const destinationPath = path.join(mediaRoot, 'destination.srt');
-  await fs.writeFile(destinationPath, 'prior playable captions');
-  if (failure === 'malformed') await fs.writeFile(subtitlePath, 'invalid');
-  if (failure === 'backup') await fs.writeFile(backupRoot, 'not a directory');
-  const rename = failure === 'rename' ? jest.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('rename failed')) : null;
-  try {
-    expect((await publish({ destinationPath })).status).toBe('warning');
-    expect(await fs.readFile(destinationPath, 'utf8')).toBe('prior playable captions');
-  } finally { if (rename) rename.mockRestore(); }
 });
