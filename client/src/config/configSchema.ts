@@ -15,6 +15,7 @@
 import { SponsorBlockCategories } from '../components/Configuration/types';
 
 export type LibraryOutputProfile = 'movie' | 'jellyfinTv';
+export type CaptionSourcePolicy = 'uploaded-then-automatic' | 'uploaded-only';
 
 /**
  * Configuration field registry
@@ -153,6 +154,12 @@ export const CONFIG_FIELDS = {
   // Subtitles
   subtitlesEnabled: { default: false, trackChanges: true },
   subtitleLanguage: { default: 'en', trackChanges: true },
+  captionSourcePolicy: { default: 'uploaded-then-automatic' as CaptionSourcePolicy, trackChanges: true },
+  captionAllowTranslated: { default: false, trackChanges: true },
+  captionPreferredVariants: { default: '', trackChanges: true },
+  captionEnrichmentEnabled: { default: false, trackChanges: true },
+  captionEnrichmentRetrySchedule: { default: '1h,24h,7d', trackChanges: true },
+  captionEnrichmentMinIntervalSeconds: { default: 60, trackChanges: true },
 
   // Appearance
   darkModeEnabled: { default: false, trackChanges: true },
@@ -289,6 +296,12 @@ export const DEFAULT_CONFIG: ConfigState = {
   tmpFilePath: CONFIG_FIELDS.tmpFilePath.default,
   subtitlesEnabled: CONFIG_FIELDS.subtitlesEnabled.default,
   subtitleLanguage: CONFIG_FIELDS.subtitleLanguage.default,
+  captionSourcePolicy: CONFIG_FIELDS.captionSourcePolicy.default,
+  captionAllowTranslated: CONFIG_FIELDS.captionAllowTranslated.default,
+  captionPreferredVariants: CONFIG_FIELDS.captionPreferredVariants.default,
+  captionEnrichmentEnabled: CONFIG_FIELDS.captionEnrichmentEnabled.default,
+  captionEnrichmentRetrySchedule: CONFIG_FIELDS.captionEnrichmentRetrySchedule.default,
+  captionEnrichmentMinIntervalSeconds: CONFIG_FIELDS.captionEnrichmentMinIntervalSeconds.default,
   darkModeEnabled: CONFIG_FIELDS.darkModeEnabled.default,
   channelVideosHotLoad: CONFIG_FIELDS.channelVideosHotLoad.default,
   apiKeyRateLimit: CONFIG_FIELDS.apiKeyRateLimit.default,
