@@ -51,6 +51,26 @@ class JellyfinAdapter extends BaseAdapter {
     return (res.data || []).map((u) => ({ id: u.Id, name: u.Name }));
   }
 
+  async refreshCaptionItem(filepath) {
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      try {
+        const id = await this.resolveItemIdByFilepath(filepath);
+        if (!id) return { status: 'pending', reason: 'Item not scanned yet' };
+        await axios.post(`${this.url}/Items/${encodeURIComponent(id)}/Refresh`, null, {
+          headers: this._headers(), timeout: REQUEST_TIMEOUT_MS,
+          params: { metadataRefreshMode: 'FullRefresh', imageRefreshMode: 'None', replaceAllMetadata: false, replaceAllImages: false },
+        });
+        return { status: 'refreshed' };
+      } catch (err) {
+        if (attempt === MAX_ATTEMPTS - 1) {
+          logger.warn({ ...describeHttpError(err) }, 'jellyfin: subtitle refresh pending');
+          return { status: 'pending', reason: 'Jellyfin refresh unavailable' };
+        }
+      }
+    }
+  }
+
   async triggerLibraryScan() {
     try {
       await axios.post(`${this.url}/Library/Refresh`, null, { headers: this._headers(), timeout: REQUEST_TIMEOUT_MS });

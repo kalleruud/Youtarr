@@ -1,3 +1,4 @@
+jest.mock('../download/captionLease', () => ({ acquireCaptionLease: jest.fn().mockResolvedValue(jest.fn().mockResolvedValue(undefined)) }));
 /* eslint-env jest */
 
 jest.mock('fs-extra', () => {

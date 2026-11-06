@@ -40,7 +40,6 @@ async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance,
   if (timeline !== 'final' && !(timeline === 'source' && timingMap)) {
     return { status: 'skipped', reason: 'final media timeline is not verified' };
   }
-  let temporaryPath;
   try {
     const originalStat = await fs.stat(subtitlePath);
     if (!originalStat.isFile()) throw new Error('Caption path is not a regular file');
@@ -68,18 +67,29 @@ async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance,
     if (isWithin(realMedia, realBackup)) throw new Error('Caption backup directory is inside media root');
     const backupPath = await retainCaption(realBackup, originalBytes);
     if (source != null) await retainCaption(realBackup, Buffer.from(source, 'utf8'));
-    temporaryPath = path.join(path.dirname(subtitlePath), `.caption-${crypto.randomBytes(16).toString('hex')}.tmp`);
-    await fs.writeFile(temporaryPath, serialized, { flag: 'wx', mode: originalStat.mode & 0o777 });
-    await fs.chmod(temporaryPath, originalStat.mode & 0o777);
-    await fs.rename(temporaryPath, subtitlePath);
-    temporaryPath = null;
+    await replaceCaption({ subtitlePath, bytes: Buffer.from(serialized), expectedHash: crypto.createHash('sha256').update(originalBytes).digest('hex') });
     logger.info({ youtubeId, subtitlePath, backupPath }, '[Post-Process] Published normalized caption; original retained');
     return { status: 'published', backupPath, diagnostics: result.diagnostics };
   } catch (err) {
     return { status: 'warning', reason: 'caption normalization or publication failed', error: err };
-  } finally {
-    if (temporaryPath) await fs.unlink(temporaryPath).catch(() => {});
   }
 }
 
-module.exports = { publishCaption };
+async function replaceCaption({ subtitlePath, bytes, expectedHash }) {
+  const current = await fs.readFile(subtitlePath);
+  if (crypto.createHash('sha256').update(current).digest('hex') !== expectedHash) throw new Error('Caption changed since preview');
+  const stat = await fs.stat(subtitlePath);
+  const temporary = path.join(path.dirname(subtitlePath), `.caption-${crypto.randomUUID()}.tmp`);
+  try {
+    await fs.writeFile(temporary, bytes, { flag: 'wx', mode: stat.mode & 0o777 });
+    await fs.chmod(temporary, stat.mode & 0o777);
+    if (!(await fs.readFile(temporary)).equals(bytes)) throw new Error('Caption verification failed');
+    const latest = await fs.readFile(subtitlePath);
+    if (!latest.equals(current)) throw new Error('Caption changed during publication');
+    await fs.rename(temporary, subtitlePath);
+  } finally {
+    await fs.unlink(temporary).catch(() => {});
+  }
+}
+
+module.exports = { publishCaption, serializeSrt, retainCaption, replaceCaption, isWithin };

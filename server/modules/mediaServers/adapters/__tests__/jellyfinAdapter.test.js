@@ -511,3 +511,21 @@ describe('JellyfinAdapter', () => {
     });
   });
 });
+
+describe('subtitle item refresh', () => {
+  beforeEach(() => jest.clearAllMocks());
+  test('refreshes only the resolved item after publication', async () => {
+    const adapter = new JellyfinAdapter({ jellyfinUrl: 'http://jf:8096', jellyfinApiKey: 'KEY' });
+    axios.get.mockResolvedValue({ data: { Items: [{ Id: 'episode', Path: '/tv/title.mp4' }] } });
+    axios.post.mockResolvedValue({});
+    expect(await adapter.refreshCaptionItem('/media/title.mp4')).toEqual({ status: 'refreshed' });
+    expect(axios.post).toHaveBeenCalledWith('http://jf:8096/Items/episode/Refresh', null, expect.objectContaining({ params: expect.objectContaining({ replaceAllMetadata: false }) }));
+  });
+  test('bounds retries and reports scan pending without throwing', async () => {
+    const adapter = new JellyfinAdapter({ jellyfinUrl: 'http://jf:8096', jellyfinApiKey: 'KEY' });
+    axios.get.mockResolvedValue({ data: { Items: [{ Id: 'episode', Path: '/tv/title.mp4' }] } });
+    axios.post.mockRejectedValue(new Error('offline'));
+    expect((await adapter.refreshCaptionItem('/media/title.mp4')).status).toBe('pending');
+    expect(axios.post).toHaveBeenCalledTimes(3);
+  });
+});

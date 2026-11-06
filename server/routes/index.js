@@ -1,3 +1,7 @@
+const path = require('path');
+const createSubtitleRepairRoutes = require('./subtitleRepair');
+const subtitleRepair = require('../modules/subtitleRepair');
+const messageEmitter = require('../modules/messageEmitter');
 const createHealthRoutes = require('./health');
 const createAuthRoutes = require('./auth');
 const createSetupRoutes = require('./setup');
@@ -153,6 +157,24 @@ function registerRoutes(app, deps) {
 
   // Media server routes
   app.use(createMediaServerRoutes({ verifyToken, configModule, mediaServers, scheduledTaskManager }));
+
+  subtitleRepair.configure({
+    mediaRoot: () => configModule.directoryPath,
+    leaseRoot: () => configModule.getJobsPath(),
+    stateRoot: () => path.join(configModule.getJobsPath(), 'subtitle-repairs'),
+    resolveVideo: id => models.Video.findByPk(id),
+    notify: () => { if (global.wss) messageEmitter.emitMessage('broadcast', null, 'subtitleRepair', 'subtitleRepairUpdated', {}); },
+    onError: err => logger.error({ err }, 'Subtitle repair worker failed'),
+    refresh: async filepath => {
+      const adapters = mediaServers.serverRegistry.getEnabledAdapters(configModule.getConfig()).filter(adapter => adapter.serverType === 'jellyfin');
+      const results = [];
+      for (const adapter of adapters) results.push(await adapter.refreshCaptionItem(filepath));
+      return { status: results.length ? (results.every(result => result.status === 'refreshed') ? 'refreshed' : 'pending') : 'not-configured' };
+    },
+  });
+  const repairReady = subtitleRepair.recover();
+  repairReady.catch(err => logger.error({ err }, 'Subtitle repair recovery failed'));
+  app.use(createSubtitleRepairRoutes({ verifyToken, subtitleRepair, logger, ready: repairReady }));
 
   // Maintenance routes
   app.use(createMaintenanceRoutes({

@@ -1,3 +1,4 @@
+jest.mock('../../../Settings/SubtitleRepairPanel', () => ({ SubtitleRepairPanel: () => null }));
 // Local metadata refresh is covered by the hook tests; isolate action/search requests here.
 const mockLocalStatus: { statuses: Record<string, unknown> } = { statuses: {} };
 jest.mock('../../../../hooks/useLocalVideoStatus', () => ({

@@ -1,3 +1,4 @@
+const { acquireCaptionLease } = require('./download/captionLease');
 const fs = require('fs-extra');
 const path = require('path');
 const { execSync, spawnSync } = require('child_process');
@@ -400,7 +401,7 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
 }
 
 // Main execution wrapped in async IIFE to handle async operations
-(async () => {
+async function finalizeDownload() {
   if (fs.existsSync(jsonPath)) {
     // Read the JSON file to get the upload_date
     const jsonData = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
@@ -1115,6 +1116,13 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
       logger.warn({ id }, 'Job ID not available while marking video as completed; skipping tracking update');
     }
   }
+}
+
+(async () => {
+  const matches = path.basename(jsonPath, '.info.json').match(/\[(.*?)\]/g);
+  const leaseId = matches ? matches[matches.length - 1].slice(1, -1) : 'default';
+  const release = await acquireCaptionLease(configModule.getJobsPath(), leaseId);
+  try { await finalizeDownload(); } finally { await release(); }
 })().catch(err => {
   logger.error({ err }, 'Error in post-processing');
   process.exit(1);
