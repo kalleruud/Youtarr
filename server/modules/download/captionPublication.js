@@ -20,8 +20,20 @@ function isWithin(parent, child) {
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
 
-async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance, timeline, timingMap }) {
-  if (provenance !== 'automatic') return { status: 'skipped', reason: 'caption provenance is not known to be automatic' };
+async function retainCaption(realBackup, bytes) {
+  const hash = crypto.createHash('sha256').update(bytes).digest('hex');
+  const retainedPath = path.join(realBackup, `${hash}.srt`);
+  try {
+    await fs.writeFile(retainedPath, bytes, { flag: 'wx', mode: 0o600 });
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+    if (!(await fs.readFile(retainedPath)).equals(bytes)) throw new Error('Caption backup content mismatch');
+  }
+  return retainedPath;
+}
+
+async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance, timeline, timingMap, source, destinationPath = subtitlePath }) {
+  if (!['automatic', 'human'].includes(provenance)) return { status: 'skipped', reason: 'caption provenance is not known to be automatic' };
   if (timeline !== 'final' && !(timeline === 'source' && timingMap)) {
     return { status: 'skipped', reason: 'final media timeline is not verified' };
   }
@@ -31,9 +43,9 @@ async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance,
     if (!originalStat.isFile()) throw new Error('Caption path is not a regular file');
     const originalBytes = await fs.readFile(subtitlePath);
     const original = new TextDecoder('utf-8', { fatal: true }).decode(originalBytes);
-    const result = normalizeCaptionTrack({ rawTrack: original, format: 'srt', provenance, timingMap: timeline === 'source' ? timingMap : undefined });
-    if (!result.diagnostics.transitionsRemoved && timeline === 'final') return { status: 'unchanged', diagnostics: result.diagnostics };
-    const serialized = serializeSrt(result.cues);
+    const result = normalizeCaptionTrack({ rawTrack: source ?? original, format: 'srt', provenance, timingMap: timeline === 'source' ? timingMap : undefined });
+    if (destinationPath === subtitlePath && !result.diagnostics.transitionsRemoved && timeline === 'final') return { status: 'unchanged', diagnostics: result.diagnostics };
+    const serialized = provenance === 'human' && timeline === 'final' ? original : serializeSrt(result.cues);
     normalizeCaptionTrack({ rawTrack: serialized, format: 'srt', provenance: 'unknown' });
     const realMedia = await fs.realpath(mediaRoot);
     let ancestor = path.resolve(backupRoot);
@@ -51,18 +63,20 @@ async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance,
     await fs.mkdir(backupRoot, { recursive: true, mode: 0o700 });
     const realBackup = await fs.realpath(backupRoot);
     if (isWithin(realMedia, realBackup)) throw new Error('Caption backup directory is inside media root');
-    const hash = crypto.createHash('sha256').update(originalBytes).digest('hex');
-    const backupPath = path.join(realBackup, `${hash}.srt`);
-    try {
-      await fs.writeFile(backupPath, originalBytes, { flag: 'wx', mode: 0o600 });
-    } catch (err) {
-      if (err.code !== 'EEXIST') throw err;
-      if (!(await fs.readFile(backupPath)).equals(originalBytes)) throw new Error('Caption backup content mismatch');
+    const backupPath = await retainCaption(realBackup, originalBytes);
+    if (source != null) await retainCaption(realBackup, Buffer.from(source, 'utf8'));
+    let destinationBytes;
+    if (destinationPath !== subtitlePath) {
+      try { destinationBytes = await fs.readFile(destinationPath); } catch (err) {
+        if (err.code !== 'ENOENT') throw err;
+      }
+      if (destinationBytes) await retainCaption(realBackup, destinationBytes);
     }
-    temporaryPath = path.join(path.dirname(subtitlePath), `.caption-${crypto.randomBytes(16).toString('hex')}.tmp`);
+    await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+    temporaryPath = path.join(path.dirname(destinationPath), `.caption-${crypto.randomBytes(16).toString('hex')}.tmp`);
     await fs.writeFile(temporaryPath, serialized, { flag: 'wx', mode: originalStat.mode & 0o777 });
     await fs.chmod(temporaryPath, originalStat.mode & 0o777);
-    await fs.rename(temporaryPath, subtitlePath);
+    await fs.rename(temporaryPath, destinationPath);
     temporaryPath = null;
     return { status: 'published', backupPath, diagnostics: result.diagnostics };
   } catch (err) {

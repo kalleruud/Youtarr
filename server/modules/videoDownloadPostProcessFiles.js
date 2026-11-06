@@ -11,7 +11,7 @@ const downloadSettingsResolver = require('./download/downloadSettingsResolver');
 const YtdlpCommandBuilder = require('./download/ytdlpCommandBuilder');
 const { selectSubtitleFilesToPrune } = require('./download/subtitleSidecarPruner');
 const { publishCaption } = require('./download/captionPublication');
-const { resolveCaptionProvenance } = require('./download/captionProvenance');
+const { resolveCaptionProvenance, resolveCaptionTimeline, resolveCutCaptions } = require('./download/captionProvenance');
 const { JobVideoDownload } = require('../models');
 const videoPersistence = require('./videoPersistence');
 const channelArtworkModule = require('./channelArtworkModule');
@@ -403,6 +403,15 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
   if (fs.existsSync(jsonPath)) {
     // Read the JSON file to get the upload_date
     const jsonData = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    let captionState;
+    const nonce = process.argv[4];
+    const captionStatePath = /^[a-f0-9]{32}$/.test(nonce || '') ? `${videoPath}.caption-state-${nonce}.json` : null;
+    try {
+      if (captionStatePath) captionState = JSON.parse(await fs.readFile(captionStatePath, 'utf8'));
+    } catch {
+      // Legacy/custom invocations have no trustworthy final-timeline evidence.
+    }
+    if (captionStatePath) await fs.remove(captionStatePath).catch(() => {});
 
     // Parse the upload_date (format: YYYYMMDD) into a Date object
     let uploadDate = null;
@@ -802,20 +811,26 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           logger.warn({ err, videoDirectory }, '[Post-Process] Subtitle pruning failed; keeping every subtitle file');
         }
 
-        // The effective yt-dlp timeline and selected track provenance are not
-        // currently passed to this process; keep the original until verified.
+        const protectedCaptions = new Set();
         for (const file of filesInDir) {
           if (!isFileForVideo(file, id) || !/\.srt$/i.test(file) || !fs.existsSync(path.join(videoDirectory, file))) continue;
           const subtitlePath = path.join(videoDirectory, file);
           const provenance = resolveCaptionProvenance({ fileName: file, youtubeId: id, info: jsonData });
-          if (provenance === 'human') continue;
+          const contract = process.argv[3] || '';
+          const cutMatch = /^managed-caption-cuts-([a-f0-9]+)$/.exec(contract);
+          const categories = cutMatch ? Buffer.from(cutMatch[1], 'hex').toString('utf8').split(',') : [];
+          const cutCaptions = cutMatch && resolveCutCaptions({ state: captionState, videoPath, fileName: file, youtubeId: id, info: jsonData, categories });
           const result = await publishCaption({
             subtitlePath,
             backupRoot: path.join(configModule.getJobsPath(), 'caption-originals'),
             mediaRoot: configModule.directoryPath,
             provenance,
-            timeline: 'unknown',
+            timeline: cutCaptions ? 'source' : resolveCaptionTimeline({ contract, state: captionState, videoPath, fileName: file, youtubeId: id }),
+            source: cutCaptions?.source,
+            timingMap: cutCaptions?.timingMap,
+            destinationPath: path.join(targetVideoDirectory, file),
           });
+          if (result.status === 'published' || ((result.status === 'warning' || result.status === 'skipped') && await fs.pathExists(path.join(targetVideoDirectory, file)))) protectedCaptions.add(file);
           if (result.status === 'warning' || result.status === 'skipped') {
             logger.warn({ subtitlePath, reason: result.reason, err: result.error }, '[Post-Process] Caption normalization skipped');
           }
@@ -827,6 +842,7 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           const allFilesInDir = await fs.readdir(videoDirectory);
           const updatedFilesInDir = allFilesInDir.filter(file => isFileForVideo(file, id));
           for (const file of updatedFilesInDir) {
+            if (protectedCaptions.has(file)) continue;
             const srcPath = path.join(videoDirectory, file);
             const destPath = path.join(targetVideoDirectory, file);
             // Overwrite if the file already exists at destination
@@ -848,13 +864,17 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           // Check if target video directory already exists (rare, but handle gracefully)
           const targetExists = await fs.pathExists(targetVideoDirectory);
 
-          if (targetExists) {
-            logger.warn({ targetVideoDirectory }, '[Post-Process] Target directory already exists, removing before move');
-            await fs.remove(targetVideoDirectory);
+          if (targetExists || protectedCaptions.size) {
+            // Merge files without deleting the existing directory: a rejected
+            // caption must leave its prior playable destination untouched.
+            await ensureDirWithRetries(targetVideoDirectory, { retries: 5, delayMs: 500 });
+            for (const file of await fs.readdir(videoDirectory)) {
+              if ((isFlatMode && !isFileForVideo(file, id)) || protectedCaptions.has(file)) continue;
+              await moveWithRetries(path.join(videoDirectory, file), path.join(targetVideoDirectory, file), { retries: 5, delayMs: 500 });
+            }
+          } else {
+            await moveWithRetries(videoDirectory, targetVideoDirectory, { retries: 5, delayMs: 500 });
           }
-
-          // Move the entire video directory from temp to final location (with retries for NFS/cross-filesystem transient errors)
-          await moveWithRetries(videoDirectory, targetVideoDirectory, { retries: 5, delayMs: 500 });
 
           // Update paths to reflect final locations
           finalVideoPath = path.join(targetVideoDirectory, videoFileName);

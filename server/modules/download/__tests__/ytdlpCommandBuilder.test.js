@@ -843,6 +843,7 @@ describe('YtdlpCommandBuilder', () => {
 
     it('should include sponsorblock args when configured', () => {
       mockConfig.sponsorblockEnabled = true;
+      mockConfig.subtitlesEnabled = true;
       mockConfig.sponsorblockCategories = { sponsor: true };
       mockConfig.sponsorblockAction = 'remove';
 
@@ -1040,6 +1041,16 @@ describe('YtdlpCommandBuilder', () => {
   });
 
   describe('getBaseCommandArgsForManualDownload', () => {
+    it('requests cut evidence and keyframes for managed SponsorBlock removal', () => {
+      mockConfig.sponsorblockEnabled = true;
+      mockConfig.subtitlesEnabled = true;
+      mockConfig.sponsorblockAction = 'remove';
+      mockConfig.sponsorblockCategories = { sponsor: true };
+      const result = YtdlpCommandBuilder.getBaseCommandArgsForManualDownload();
+      expect(result).toContain('--force-keyframes-at-cuts');
+      expect(result[result.indexOf('--print-to-file') + 1]).toContain('sponsorblock_chapters');
+      expect(result[result.indexOf('--exec') + 1]).toContain(`managed-caption-cuts-${Buffer.from('sponsor').toString('hex')}`);
+    });
     it('should build command args without duration filter', () => {
       const result = YtdlpCommandBuilder.getBaseCommandArgsForManualDownload();
 
@@ -1060,7 +1071,8 @@ describe('YtdlpCommandBuilder', () => {
         arg !== '--match-filter' && manualArgs[i - 1] !== '--match-filter'
       );
 
-      expect(regularFiltered).toEqual(manualFiltered);
+      const stripNonce = args => args.map(arg => arg.replace(/(?<=caption-state-)[a-f0-9]{32}|(?<=managed-caption-v1 )[a-f0-9]{32}/g, 'NONCE'));
+      expect(stripNonce(regularFiltered)).toEqual(stripNonce(manualFiltered));
     });
 
     it('should use custom resolution when provided', () => {

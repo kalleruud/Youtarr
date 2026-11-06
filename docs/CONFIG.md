@@ -184,6 +184,7 @@ Youtarr must be running at the scheduled time; missed occurrences are not replay
 - **Type**: `boolean`
 - **Default**: `false`
 - **Description**: Download subtitles/closed captions with videos
+- **Normalization**: Recognized rolling automatic captions are normalized at download finalization. Originals are retained outside the media library under the jobs directory. When caption origin or timing cannot be verified, Youtarr keeps the existing playable track and logs a warning.
 
 ### Subtitle Languages
 - **Config Key**: `subtitleLanguage`
@@ -360,7 +361,7 @@ Sync is one-way (server -> Youtarr). Non-owner Plex users come from the server's
 - **Default**: `"remove"`
 - **Options**: `"remove"`, `"mark"`
 - **Description**: How to handle sponsored segments
-  - `remove`: Cut segments from video file
+  - `remove`: Cut segments from the video file. When subtitles are enabled, yt-dlp re-encodes the video to insert keyframes for accurate cut points; this increases processing time and can affect video quality.
   - `mark`: Add chapters to mark segments
 
 ### SponsorBlock Categories

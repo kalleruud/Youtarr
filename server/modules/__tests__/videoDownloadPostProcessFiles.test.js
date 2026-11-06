@@ -118,7 +118,7 @@ const ChannelVideo = require('../../models/channelvideo');
 
 const flushPromises = () => new Promise((resolve) => queueMicrotask(resolve));
 
-async function settleAsync(iterations = 5) {
+async function settleAsync(iterations = 15) {
   for (let i = 0; i < iterations; i += 1) {
     await flushPromises();
   }
@@ -1873,6 +1873,21 @@ describe('videoDownloadPostProcessFiles', () => {
       expect(moveWithRetries).toHaveBeenCalledWith(
         '/tmp/youtarr-downloads/Channel/Video Title - abc123',
         '/library/Channel/Video Title - abc123',
+        expect.any(Object)
+      );
+    });
+
+    it('keeps non-video sidecars when merging an existing nested destination', async () => {
+      Channel.findOne.mockResolvedValue({ ...trackedChannel, skip_video_folder: false });
+      fs.pathExists.mockImplementation(async p => p === '/library/Channel/Video Title - abc123');
+      fs.readdir.mockResolvedValue(['Video Title [abc123].mp4', 'poster.jpg']);
+
+      await loadModule();
+      await settleAsync();
+
+      expect(moveWithRetries).toHaveBeenCalledWith(
+        '/tmp/youtarr-downloads/Channel/Video Title - abc123/poster.jpg',
+        '/library/Channel/Video Title - abc123/poster.jpg',
         expect.any(Object)
       );
     });
