@@ -18,6 +18,6 @@ module.exports = {
     coverageReporters: ['text', 'lcov', 'html'],
     testTimeout: 10000,
     setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
-    testPathIgnorePatterns: ['<rootDir>/migrations/__tests__/channelArtworkDatabase\\.integration\\.test\\.js$', '<rootDir>/migrations/__tests__/episodeAssignmentDatabase\\.integration\\.test\\.js$', '<rootDir>/migrations/__tests__/externalApiDatabase\\.integration\\.test\\.js$'],
+    testPathIgnorePatterns: ['<rootDir>/migrations/__tests__/channelArtworkDatabase\\.integration\\.test\\.js$', '<rootDir>/migrations/__tests__/episodeAssignmentDatabase\\.integration\\.test\\.js$', '<rootDir>/migrations/__tests__/externalApiDatabase\\.integration\\.test\\.js$', '<rootDir>/migrations/__tests__/captionTracksDatabase\\.integration\\.test\\.js$'],
     maxWorkers: 1
 };

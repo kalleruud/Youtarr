@@ -12,6 +12,7 @@ const YtdlpCommandBuilder = require('./download/ytdlpCommandBuilder');
 const { selectSubtitleFilesToPrune } = require('./download/subtitleSidecarPruner');
 const { publishCaption } = require('./download/captionPublication');
 const { resolveCaptionProvenance, resolveCaptionTimeline, resolveCutCaptions } = require('./download/captionProvenance');
+const { describeCaptionRecord, CAPTION_RECORD_KEY } = require('./captions/captionRecord');
 const { JobVideoDownload } = require('../models');
 const videoPersistence = require('./videoPersistence');
 const tvPublication = require('./tvPublication');
@@ -848,6 +849,7 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           const probe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath], { encoding: 'utf8', timeout: 30000 });
           if (probe.status === 0 && typeof probe.stdout === 'string' && probe.stdout.trim()) actualDuration = Number(probe.stdout.trim());
         }
+        const captionRecords = [];
         for (const file of filesInDir) {
           if (!isFileForVideo(file, id) || !/\.srt$/i.test(file) || !fs.existsSync(path.join(videoDirectory, file))) continue;
           const subtitlePath = path.join(videoDirectory, file);
@@ -871,7 +873,10 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           if (result.status === 'warning' || result.status === 'skipped') {
             logger.warn({ subtitlePath, reason: result.reason, err: result.error }, '[Post-Process] Caption normalization skipped; publishing the downloaded caption unchanged');
           }
+          captionRecords.push(describeCaptionRecord({ fileName: file, youtubeId: id, info: jsonData, state: captionState, result }));
         }
+        // Read by modules/captions when the download is recorded (issue #5).
+        jsonData[CAPTION_RECORD_KEY] = captionRecords;
 
         if (tvPublish) {
           // TV layout: the publisher stages and renames media, captions,

@@ -42,6 +42,9 @@ jest.mock('../../../models/channel', () => ({
   findAll: jest.fn().mockResolvedValue([]),
 }));
 
+jest.mock('../../captions', () => ({
+  catalog: { recordDownloads: jest.fn().mockResolvedValue() },
+}));
 jest.mock('../../channelModule', () => ({
   backfillChannelImages: jest.fn().mockResolvedValue(),
 }));

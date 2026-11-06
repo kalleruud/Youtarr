@@ -1977,6 +1977,16 @@ describe('videoDownloadPostProcessFiles', () => {
         expect(publishCaption).toHaveBeenCalledWith(expect.objectContaining({ subtitlePath: tempSrt, youtubeId: 'abc123' }));
         expect(moveWithRetries).toHaveBeenCalledWith(tempSrt, destination, expect.any(Object));
       });
+
+      it('records each published caption on the cached info.json for provenance tracking', async () => {
+        setupExistingDestination();
+        const hash = 'c'.repeat(64);
+        await runWithPublishResult({ status: 'published', backupPath: `/mock/jobs/caption-originals/${hash}.srt`, normalizerVersion: 2 });
+        const written = fs.writeFileSync.mock.calls.map((call) => String(call[1])).find((text) => text.includes('_youtarr_captions'));
+        expect(JSON.parse(written)._youtarr_captions).toEqual([
+          { code: 'en', source: 'unknown', normalization: 'published', sourceSha256: hash, normalizerVersion: 2 },
+        ]);
+      });
     });
 
     it('hoists files flat into the channel folder when the channel chose skip_video_folder=true', async () => {

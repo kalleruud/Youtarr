@@ -12,6 +12,7 @@ const subfolderModule = require('../subfolderModule');
 const m3uGenerator = require('../m3uGenerator');
 const { JobVideoDownload } = require('../../models');
 const Channel = require('../../models/channel');
+const captions = require('../captions');
 
 // channelModule and downloadModule are required late inside the function body:
 // both sit on a require cycle (channelModule -> downloadModule ->
@@ -79,6 +80,14 @@ async function runCompletionSideEffects({
     } catch (err) {
       logger.error({ err }, 'Failed to backfill playlist video channels');
     }
+  }
+
+  // Record caption provenance and schedule delayed caption checks (issue #5).
+  // Best effort and in the background: it never affects the job's result.
+  if (videoData && videoData.length > 0) {
+    captions.catalog.recordDownloads(videoData).catch((err) => {
+      logger.error({ err }, 'Failed to record caption provenance');
+    });
   }
 
   // Trigger playlist M3U regeneration and media-server sync for any playlists

@@ -595,6 +595,36 @@ describe('YtdlpCommandBuilder', () => {
     });
   });
 
+  describe('caption languages (issue #5)', () => {
+    const VARIANT_SUFFIX = '(-(?-i:[A-Z][a-z]{3}))?(-(?-i:[A-Z]{2}|[0-9]{3}))?';
+
+    it('requests Bokmal tracks for Norwegian', () => {
+      expect(YtdlpCommandBuilder.buildSubtitleLanguageSelector('no')).toBe(`no${VARIANT_SUFFIX},nb${VARIANT_SUFFIX}`);
+    });
+
+    it('does not repeat an alias that is also configured', () => {
+      expect(YtdlpCommandBuilder.buildSubtitleLanguageSelector('no,nb')).toBe(`no${VARIANT_SUFFIX},nb${VARIANT_SUFFIX}`);
+    });
+
+    it('caption checks never download media or use the archive', () => {
+      const args = YtdlpCommandBuilder.buildCaptionEnrichmentArgs({}, 'abcdefghijk', ['en'], '/jobs/caption-checks/x');
+      expect([args.includes('--skip-download'), args.includes('--download-archive')]).toEqual([true, false]);
+    });
+
+    it('caption checks end with the video URL after --', () => {
+      const args = YtdlpCommandBuilder.buildCaptionEnrichmentArgs({}, 'abcdefghijk', ['en'], '/jobs/caption-checks/x');
+      expect(args.slice(-2)).toEqual(['--', 'https://www.youtube.com/watch?v=abcdefghijk']);
+    });
+
+    it('caption checks reject an invalid video id', () => {
+      expect(() => YtdlpCommandBuilder.buildCaptionEnrichmentArgs({}, '../../etc', ['en'], '/x')).toThrow('Invalid YouTube video id');
+    });
+
+    it('caption checks drop language entries that are not plain codes', () => {
+      expect(() => YtdlpCommandBuilder.buildCaptionEnrichmentArgs({}, 'abcdefghijk', ['.*'], '/x')).toThrow('No caption languages');
+    });
+  });
+
   describe('buildMatchFilters', () => {
     it('should return base filters when no filter config provided', () => {
       const result = YtdlpCommandBuilder.buildMatchFilters();
