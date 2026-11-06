@@ -15,6 +15,7 @@ const plexModule = require('../plexModule');
 const SUPPORTED_FIELDS = ['played flag', 'play count', 'resume position', 'last played date', 'user playlist membership'];
 const UNSUPPORTED_JELLYFIN_FIELDS = [
   'favorites, user ratings and likes are not carried over',
+  'rollback restores files and Youtarr paths only; restored Jellyfin viewing state and appended playlist entries are not undone',
   'restored playlist entries are appended in their original order, after entries that are not Youtarr videos',
 ];
 const YOUTUBE_ID_IN_NAME = /\[([A-Za-z0-9_-]{1,64})\][^\s[\]]*$/;
@@ -62,7 +63,14 @@ function adapterFor(config) {
 async function snapshot(plan, config, { adapter = adapterFor(config) } = {}) {
   if (!adapter) return null;
   const ids = new Set(plan.items.map((item) => item.youtubeId));
-  const { entries, users } = await adapter.fetchWatchStates();
+  const { entries, users, completeUserIds } = await adapter.fetchWatchStates();
+  const expectedUserIds = (users || []).map((user) => user.id);
+  const missingUserIds = expectedUserIds.filter((id) => !completeUserIds?.includes(id));
+  if (!expectedUserIds.length || missingUserIds.length) {
+    const error = new Error(`Incomplete Jellyfin watch-state snapshot; incomplete users: ${missingUserIds.join(', ') || 'user enumeration unavailable'}`);
+    error.diagnostics = { expectedUserIds, completeUserIds: completeUserIds || [], missingUserIds };
+    throw error;
+  }
   const watch = {};
   for (const entry of entries) {
     const youtubeId = youtubeIdOf(entry.path);

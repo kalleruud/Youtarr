@@ -540,12 +540,24 @@ describe('JellyfinAdapter', () => {
 
     test('listUserPlaylists lists each playlist once with its entry paths', async () => {
       axios.get
-        .mockResolvedValueOnce({ data: { Items: [{ Id: 'p1', Name: 'Mine' }] } })
-        .mockResolvedValueOnce({ data: { Items: [{ Id: 'i1', Path: '/m/a [x].mp4' }] } })
-        .mockResolvedValueOnce({ data: { Items: [{ Id: 'p1', Name: 'Mine' }] } });
+        .mockResolvedValueOnce({ data: { TotalRecordCount: 1, Items: [{ Id: 'p1', Name: 'Mine' }] } })
+        .mockResolvedValueOnce({ data: { TotalRecordCount: 1, Items: [{ Id: 'i1', Path: '/m/a [x].mp4' }] } })
+        .mockResolvedValueOnce({ data: { TotalRecordCount: 1, Items: [{ Id: 'p1', Name: 'Mine' }] } });
       expect(await new JellyfinAdapter(cfg).listUserPlaylists(['u1', 'u2'])).toEqual([
         { id: 'p1', name: 'Mine', userId: 'u1', entries: [{ itemId: 'i1', path: '/m/a [x].mp4' }] },
       ]);
+    });
+
+    test('refuses truncated playlist entries', async () => {
+      axios.get.mockResolvedValueOnce({ data: { TotalRecordCount: 1, Items: [{ Id: 'p1' }] } })
+        .mockResolvedValueOnce({ data: { TotalRecordCount: 2, Items: [{ Id: 'i1' }] } })
+        .mockResolvedValueOnce({ data: { TotalRecordCount: 2, Items: [] } });
+      await expect(new JellyfinAdapter(cfg).listUserPlaylists(['u1'])).rejects.toThrow('inconsistent pagination');
+    });
+
+    test('refuses repeated playlist pages', async () => {
+      axios.get.mockResolvedValue({ data: { TotalRecordCount: 2, Items: [{ Id: 'p1' }] } });
+      await expect(new JellyfinAdapter(cfg).listUserPlaylists(['u1'])).rejects.toThrow('repeated page');
     });
 
     test('addPlaylistItems sends the ids as one comma list', async () => {

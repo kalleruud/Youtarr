@@ -302,3 +302,7 @@ Organize content by type:
 ## File Structure
 
 See [docs/YOUTARR_DOWNLOADS_FOLDER_STRUCTURE.md](../YOUTARR_DOWNLOADS_FOLDER_STRUCTURE.md)
+
+Migration safety follow-up (PR #27): a watch-state snapshot requires every enumerated user in the adapter's `completeUserIds`. Playlist enumeration and entry reads require complete, non-repeating pagination with record counts. Failures stop apply before moving files unless the owner explicitly sends `acceptUserStateLoss: true`; that override records the failure diagnostics and does not claim state preservation. Verified cross-device copies record their staging inode and checksum before publication so resume/rollback can reconcile an unlink failure without deleting an unrelated identical file.
+
+Known review blockers remain: the maintenance lease does not yet drain all in-flight writers, and migration paths do not yet reject symlink ancestors throughout preview/apply/resume/rollback. Do not use this migration on real media until those blockers are fixed and independently reviewed. Playlist restoration appends entries and rollback cannot undo restored Jellyfin state or appended entries; preservation completion does not mean exact playlist ordering or reversible Jellyfin writes.

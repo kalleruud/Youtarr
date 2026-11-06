@@ -47,7 +47,7 @@ async function sha256(filePath) {
   return hash.digest('hex');
 }
 
-async function copyVerified(source, target) {
+async function copyVerified(source, target, journal, checkpoint) {
   const staged = path.join(path.dirname(target), `${STAGING_PREFIX}${crypto.randomBytes(6).toString('hex')}${path.extname(target)}`);
   try {
     await fs.copyFile(source, staged, fs.constants.COPYFILE_EXCL);
@@ -57,6 +57,11 @@ async function copyVerified(source, target) {
     }
     if (await statOrNull(target)) {
       throw new MoveError('target-exists', `A file already exists at ${target}`);
+    }
+    if (journal) {
+      const identity = await fs.stat(staged);
+      Object.assign(journal, { sha256: sourceHash, ino: identity.ino, dev: identity.dev });
+      await checkpoint();
     }
     await fs.rename(staged, target);
     await fs.unlink(source);
@@ -75,7 +80,7 @@ async function copyVerified(source, target) {
  *   target of another size is reported instead of accepted
  * @returns {Promise<{action: 'moved'|'already-moved', method?: 'rename'|'copy', sha256?: string}>}
  */
-async function moveFile(source, target, { expectedSize } = {}) {
+async function moveFile(source, target, { expectedSize, journal, checkpoint = async () => {} } = {}) {
   if (path.resolve(source) === path.resolve(target)) return { action: 'already-moved' };
   const [src, dst] = await Promise.all([statOrNull(source), statOrNull(target)]);
   if (!src && dst) {
@@ -85,7 +90,17 @@ async function moveFile(source, target, { expectedSize } = {}) {
     return { action: 'already-moved' };
   }
   if (!src) throw new MoveError('source-missing', `Neither ${source} nor ${target} exists`);
-  if (dst) throw new MoveError('target-exists', `A file already exists at ${target}`);
+  if (dst) {
+    // Only the inode recorded before publishing our verified staging copy is
+    // ours to reconcile. Equal bytes alone never establish ownership.
+    const published = [src, dst].find((stat) => journal && stat.ino === journal.ino && stat.dev === journal.dev);
+    if (!published || !journal.sha256 || !src.isFile() || !dst.isFile() ||
+        await sha256(source) !== journal.sha256 || await sha256(target) !== journal.sha256) {
+      throw new MoveError('target-exists', `A file already exists at ${target}`);
+    }
+    await fs.unlink(source);
+    return { action: 'already-moved' };
+  }
   if (!src.isFile()) throw new MoveError('not-a-file', `Not a regular file: ${source}`);
 
   await fs.ensureDir(path.dirname(target));
@@ -93,7 +108,7 @@ async function moveFile(source, target, { expectedSize } = {}) {
     await fs.rename(source, target);
   } catch (err) {
     if (err.code !== 'EXDEV') throw err;
-    return { action: 'moved', method: 'copy', sha256: await copyVerified(source, target) };
+    return { action: 'moved', method: 'copy', sha256: await copyVerified(source, target, journal, checkpoint) };
   }
   const moved = await statOrNull(target);
   if (!moved || moved.size !== src.size) {

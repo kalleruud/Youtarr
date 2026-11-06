@@ -137,6 +137,7 @@ class TvMigration {
       followUps: state.followUps || [],
       userState: snapshot ? { takenAt: snapshot.takenAt, counts: snapshot.counts } : null,
       userStateSkipped: state.userStateSkipped || null,
+      userStateDiagnostics: state.userStateDiagnostics || null,
       restore: state.restore || null,
       running: Boolean(this.running && this.running.planId === planId),
     };
@@ -219,8 +220,9 @@ class TvMigration {
       logger.warn({ err, planId: plan.planId }, 'Could not snapshot Jellyfin user state before the migration');
       if (!acceptUserStateLoss) {
         throw new TvMigrationError('snapshot-failed',
-          `Could not read Jellyfin watch state and playlists (${err.message}). Fix the connection, or apply with acceptUserStateLoss to continue without them.`);
+          `Could not read Jellyfin watch state and playlists (${err.message}). Fix the connection, or apply with acceptUserStateLoss to continue without them.`, err.diagnostics);
       }
+      state.userStateDiagnostics = err.diagnostics || null;
       state.userStateSkipped = `Jellyfin user state was not snapshotted: ${err.message}`;
     }
   }

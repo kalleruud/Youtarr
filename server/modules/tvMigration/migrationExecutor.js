@@ -48,6 +48,7 @@ function leftoverTarget(leftoversDir, leftover) {
  */
 async function applyItem(item, { itemState, leftoversDir, createdDocuments, verifyChecksums, checkpoint }) {
   const state = itemState;
+  const move = journaledMover(state, checkpoint);
   if (verifyChecksums && !state.sha256Before && await statOrNull(item.media.source)) {
     state.sha256Before = await sha256(item.media.source);
     await checkpoint();
@@ -76,15 +77,15 @@ async function applyItem(item, { itemState, leftoversDir, createdDocuments, veri
   }
 
   for (const file of item.files) {
-    await moveFile(file.source, file.target, { expectedSize: file.fingerprint?.size });
+    await move(file.source, file.target, { expectedSize: file.fingerprint?.size });
   }
   for (const leftover of item.leftovers) {
-    await moveFile(leftover.source, leftoverTarget(leftoversDir, leftover), { expectedSize: leftover.fingerprint.size });
+    await move(leftover.source, leftoverTarget(leftoversDir, leftover), { expectedSize: leftover.fingerprint.size });
   }
   state.step = 'sidecars-moved';
   await checkpoint();
 
-  const moved = await moveFile(item.media.source, item.media.target, { expectedSize: item.media.fingerprint.size });
+  const moved = await move(item.media.source, item.media.target, { expectedSize: item.media.fingerprint.size });
   if (moved.method) state.mediaMethod = moved.method;
   if (verifyChecksums && state.sha256Before) {
     state.sha256After = await sha256(item.media.target);
@@ -113,6 +114,7 @@ async function applyItem(item, { itemState, leftoversDir, createdDocuments, veri
 
 /** Put one item back where planning found it. */
 async function rollbackItem(item, { leftoversDir, checkpoint, itemState }) {
+  const move = journaledMover(itemState, checkpoint);
   // Deleted in Youtarr after the migration: there is no file to put back.
   const current = await Video.findOne({ where: { youtubeId: item.youtubeId }, attributes: ['filePath', 'removed'] });
   if (current && current.removed && !(await statOrNull(item.media.target)) && !(await statOrNull(item.media.source))) {
@@ -134,12 +136,12 @@ async function rollbackItem(item, { leftoversDir, checkpoint, itemState }) {
   await checkpoint();
 
   await fs.ensureDir(item.oldDir);
-  await moveFileBack(item.media.target, item.media.source, item.media.fingerprint.size);
+  await moveFileBack(item.media.target, item.media.source, item.media.fingerprint.size, move);
   for (const leftover of item.leftovers) {
-    await moveFileBack(leftoverTarget(leftoversDir, leftover), leftover.source, leftover.fingerprint.size);
+    await moveFileBack(leftoverTarget(leftoversDir, leftover), leftover.source, leftover.fingerprint.size, move);
   }
   for (const file of item.files) {
-    await moveFileBack(file.target, file.source, file.fingerprint?.size);
+    await moveFileBack(file.target, file.source, file.fingerprint?.size, move);
   }
   const episodeNfo = item.documents.find((doc) => doc.role === 'episode');
   if (episodeNfo && itemState.episodeNfoWritten) await fs.remove(episodeNfo.target);
@@ -148,9 +150,18 @@ async function rollbackItem(item, { leftoversDir, checkpoint, itemState }) {
 }
 
 // A file that never moved (the run stopped before it) is already back.
-async function moveFileBack(from, to, expectedSize) {
+function journaledMover(state, checkpoint) {
+  state.moves = state.moves || {};
+  return (from, to, options) => {
+    const key = JSON.stringify([from, to].sort());
+    const journal = state.moves[key] = state.moves[key] || {};
+    return moveFile(from, to, { ...options, journal, checkpoint });
+  };
+}
+
+async function moveFileBack(from, to, expectedSize, move) {
   try {
-    await moveFile(from, to, { expectedSize });
+    await move(from, to, { expectedSize });
   } catch (err) {
     if (!(err instanceof MoveError) || err.code !== 'source-missing') throw err;
     throw new MigrationStepError('file-lost', `Neither ${from} nor ${to} exists`);

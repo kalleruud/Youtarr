@@ -21,6 +21,7 @@ function fakeAdapter(overrides = {}) {
   return {
     userId: 'u1',
     fetchWatchStates: jest.fn(async () => ({
+      completeUserIds: ['u1', 'u2'],
       users: [{ id: 'u1', name: 'One' }, { id: 'u2', name: 'Two' }],
       entries: [
         { path: `/movies/Show/Show - A [${A}].mp4`, serverUserId: 'u1', played: true, playCount: 2, positionMs: 0, lastWatchedAt: new Date('2026-01-01T00:00:00Z') },
@@ -118,4 +119,14 @@ describe('restore', () => {
 
 test('youtubeIdOf reads the trailing [id] token', () => {
   expect([userState.youtubeIdOf(`C:\\x\\Show - A [${A}].mp4`), userState.youtubeIdOf('/x/no-id.mp4')]).toEqual([A, null]);
+});
+
+test('refuses adapter-shaped partial watch-state responses before reading playlists', async () => {
+  const adapter = fakeAdapter({ fetchWatchStates: jest.fn(async () => ({
+    users: [{ id: 'u1' }, { id: 'u2' }], completeUserIds: ['u1'], entries: [],
+  })) });
+  await expect(userState.snapshot(plan, jellyfinConfig, { adapter })).rejects.toMatchObject({
+    diagnostics: { missingUserIds: ['u2'], completeUserIds: ['u1'] },
+  });
+  expect(adapter.listUserPlaylists).not.toHaveBeenCalled();
 });

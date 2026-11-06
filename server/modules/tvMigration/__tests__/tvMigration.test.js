@@ -297,7 +297,7 @@ describe('Jellyfin user state', () => {
     axios.get.mockImplementation(async (url, { params }) => {
       if (url.endsWith('/Users')) return { data: [{ Id: 'u1', Name: 'One' }] };
       if (params.isPlayed) return { data: { Items: [{ Id: 'old', Path: `/media/Show/Show - Flat [${FLAT}].mp4`, UserData: { Played: true, PlayCount: 1 } }] } };
-      return { data: { Items: [] } };
+      return { data: { TotalRecordCount: 0, Items: [] } };
     });
     const plan = await migration.createPlan();
     const result = await applyAndWait(plan.planId);

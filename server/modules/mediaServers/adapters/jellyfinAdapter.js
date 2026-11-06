@@ -262,26 +262,42 @@ class JellyfinAdapter extends BaseAdapter {
   async listUserPlaylists(userIds) {
     const playlists = new Map();
     for (const userId of userIds) {
-      const params = { userId, includeItemTypes: 'Playlist', recursive: true };
-      const res = await axios.get(`${this.url}/Items`, { headers: this._headers(), params, timeout: REQUEST_TIMEOUT_MS });
-      for (const playlist of res.data?.Items || []) {
+      const items = await this._migrationItems('/Items', { userId, includeItemTypes: 'Playlist', recursive: true });
+      for (const playlist of items) {
         if (playlists.has(playlist.Id)) continue;
-        const itemsRes = await axios.get(`${this.url}/Playlists/${encodeURIComponent(playlist.Id)}/Items`, {
-          headers: this._headers(), params: { userId, fields: 'Path' }, timeout: REQUEST_TIMEOUT_MS,
-        });
-        const entries = (itemsRes.data?.Items || []).map((item) => ({ itemId: item.Id, path: item.Path || null }));
+        const entries = (await this._migrationItems(`/Playlists/${encodeURIComponent(playlist.Id)}/Items`, { userId, fields: 'Path' }))
+          .map((item) => ({ itemId: item.Id, path: item.Path || null }));
         playlists.set(playlist.Id, { id: playlist.Id, name: playlist.Name || null, userId, entries });
       }
     }
     return [...playlists.values()];
   }
 
+  // Migration must never treat a truncated or repeated page as a complete snapshot.
+  async _migrationItems(endpoint, params) {
+    const items = [];
+    const seen = new Set();
+    for (let startIndex = 0; ; startIndex += WATCH_STATE_PAGE_SIZE) {
+      const res = await axios.get(`${this.url}${endpoint}`, {
+        headers: this._headers(), params: { ...params, startIndex, limit: WATCH_STATE_PAGE_SIZE }, timeout: REQUEST_TIMEOUT_MS,
+      });
+      const page = res.data?.Items;
+      const total = res.data?.TotalRecordCount;
+      if (!Array.isArray(page) || !Number.isInteger(total) || total < 0) throw new Error('Incomplete Jellyfin playlist snapshot: missing count or items');
+      for (const item of page) {
+        const key = item.PlaylistItemId || item.Id;
+        if (!key || seen.has(key)) throw new Error('Incomplete Jellyfin playlist snapshot: repeated page or item');
+        seen.add(key);
+        items.push(item);
+      }
+      if (items.length === total) return items;
+      if (!page.length || items.length > total) throw new Error('Incomplete Jellyfin playlist snapshot: inconsistent pagination');
+    }
+  }
+
   /** Item ids currently in a playlist, in order. */
   async listPlaylistItemIds(playlistId, userId) {
-    const res = await axios.get(`${this.url}/Playlists/${encodeURIComponent(playlistId)}/Items`, {
-      headers: this._headers(), params: { userId }, timeout: REQUEST_TIMEOUT_MS,
-    });
-    return (res.data?.Items || []).map((item) => item.Id);
+    return (await this._migrationItems(`/Playlists/${encodeURIComponent(playlistId)}/Items`, { userId })).map((item) => item.Id);
   }
 
   async addPlaylistItems(playlistId, itemIds, userId) {
