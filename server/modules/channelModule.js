@@ -134,12 +134,21 @@ class ChannelModule {
   }
 
   /**
+   * Plan the automatic channel sweep under the acquisition policies.
+   * @returns {Promise<{urls: string[], excludedVideoIds: string[], skipped: Object[]}>}
+   */
+  async getChannelSweepPlan() {
+    return autoDownloadScheduler.getChannelSweepPlan();
+  }
+
+  /**
    * Generate a temporary file with enabled channel URLs for yt-dlp
    * Respects the auto_download_enabled_tabs column to generate URLs for each enabled tab type
+   * @param {{urls: string[]}|null} [plan] - A sweep plan already loaded by the caller
    * @returns {Promise<string>} - Path to the temporary file
    */
-  async generateChannelsFile() {
-    return autoDownloadScheduler.generateChannelsFile();
+  async generateChannelsFile(plan = null) {
+    return autoDownloadScheduler.generateChannelsFile(plan);
   }
 
   /**

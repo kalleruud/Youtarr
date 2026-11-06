@@ -13,6 +13,7 @@ const ChannelVideo = require('../models/channelvideo');
 const logger = require('../logger');
 const playlistDownloadModule = require('./playlistDownloadModule');
 const storageGuard = require('./storageGuard');
+const channelSweepPlanner = require('./acquisition/channelSweepPlanner');
 
 const DEFAULT_FILES_TO_DOWNLOAD = 5;
 // Statuses that end a grouped channel download before its remaining groups run.
@@ -372,7 +373,8 @@ class DownloadModule {
       try {
         // Generate temporary channels file from database
         const channelModule = require('./channelModule');
-        tempChannelsFile = await channelModule.generateChannelsFile();
+        const sweepPlan = await channelModule.getChannelSweepPlan();
+        tempChannelsFile = await channelModule.generateChannelsFile(sweepPlan);
 
         // Use override settings if provided, otherwise use defaults
         const overrideSettings = this.getOverrideSettings(jobData);
@@ -384,7 +386,7 @@ class DownloadModule {
         const videoCount = overrideSettings.videoCount || configModule.config.channelFilesToDownload;
         const allowRedownload = !!overrideSettings.allowRedownload;
 
-        const args = YtdlpCommandBuilder.getBaseCommandArgs(resolution, allowRedownload);
+        const args = YtdlpCommandBuilder.getBaseCommandArgs(resolution, allowRedownload, null, null, null, false, sweepPlan.excludedVideoIds);
         args.push('-a', tempChannelsFile);
         args.push('--playlist-end', String(videoCount));
 
@@ -682,41 +684,20 @@ class DownloadModule {
   async executeGroupDownload(group, jobId, jobType, jobData, skipJobTransition = false) {
     let tempChannelsFile = null;
     try {
-      // Generate channels file for this specific group
-      const channelModule = require('./channelModule');
+      // Generate channels file for this specific group, under each channel's
+      // acquisition policy (issue #10)
       const fs = require('fs').promises;
       const path = require('path');
       const os = require('os');
       const { v4: uuidv4 } = require('uuid');
 
       tempChannelsFile = path.join(os.tmpdir(), `channels-group-${uuidv4()}.txt`);
-      const urls = [];
-
-      for (const channel of group.channels) {
-        if (channel.channel_id) {
-          const canonical = channelModule.resolveChannelUrlFromId(channel.channel_id);
-          const enabledTabs = (channel.auto_download_enabled_tabs ?? '')
-            .split(',')
-            .map(t => t.trim())
-            .filter(Boolean);
-
-          for (const tabType of enabledTabs) {
-            let tabUrl;
-            switch (tabType) {
-            case 'video': tabUrl = 'videos'; break;
-            case 'short': tabUrl = 'shorts'; break;
-            case 'livestream': tabUrl = 'streams'; break;
-            default: tabUrl = 'videos';
-            }
-            urls.push(`${canonical}/${tabUrl}`);
-          }
-        }
-      }
+      const sweepPlan = await channelSweepPlanner.loadChannelSweepPlan(group.channels, { includeLegacyUrls: false });
+      const urls = sweepPlan.urls;
 
       // Check if we have any URLs to download
       if (urls.length === 0) {
-        logger.warn({ jobType }, 'Skipping group - no enabled tabs for any channels in this group');
-        logger.info({ jobType }, 'Skipping group - no enabled tabs for any channels');
+        logger.warn({ jobType }, 'Skipping group - no channel in this group has a tab set to download automatically');
         return; // Skip this group, continue with next group in sequence
       }
 
@@ -731,7 +712,7 @@ class DownloadModule {
       // Pass audioFormat from filterConfig for MP3 downloads
       const audioFormat = group.filterConfig?.audioFormat || null;
       const skipVideoFolder = group.filterConfig?.skipVideoFolder || false;
-      const args = YtdlpCommandBuilder.getBaseCommandArgs(group.quality, allowRedownload, null, group.filterConfig, audioFormat, skipVideoFolder);
+      const args = YtdlpCommandBuilder.getBaseCommandArgs(group.quality, allowRedownload, null, group.filterConfig, audioFormat, skipVideoFolder, sweepPlan.excludedVideoIds);
       args.push('-a', tempChannelsFile);
       args.push('--playlist-end', String(videoCount));
 
