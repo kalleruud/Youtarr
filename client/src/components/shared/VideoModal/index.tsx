@@ -1,3 +1,4 @@
+import AcquisitionStrategy from '../AcquisitionStrategy';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import {
@@ -289,6 +290,7 @@ function VideoModal({
               loading={metadataLoading}
               onAddChannel={canAddChannel ? () => setAddChannelOpen(true) : undefined}
             />
+            <AcquisitionStrategy endpoint={open ? `/api/videos/${video.youtubeId}/acquisition-policy` : ''} token={token} />
             <EpisodeIdentity youtubeId={open ? video.youtubeId : ''} token={token} />
             <VideoWatchStatusSection statuses={watchStatuses} />
             <VideoTechnical

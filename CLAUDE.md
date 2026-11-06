@@ -313,3 +313,7 @@ When a code change creates or invalidates information in this file or in `docs/`
 
 ### CI/CD
 When debugging CI/CD or GitHub Actions issues, check both the permissions AND the actual command execution logs. A fix is not complete until the underlying behavior is verified working.
+
+### Acquisition strategy controls
+
+`components/shared/AcquisitionStrategy` is shared by channel settings, Core Settings and video detail. It renders server policy decisions and revision-protected updates; unsupported modes retain their capability explanation. Download-all previews include a selection version; confirmation rechecks candidates and channel/global policy before admission. This explicit manual backfill ignores automatic policy and retains existing downloads. Sizes are unknown until acquisition.

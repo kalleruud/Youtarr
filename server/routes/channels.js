@@ -1103,7 +1103,7 @@ module.exports = function createChannelRoutes({ verifyToken, channelModule, arch
    * /api/channels/{channelId}/download-all/preview:
    *   get:
    *     summary: Preview a channel download-all run
-   *     description: Returns how many known videos on a channel tab would be downloaded by a download-all run, plus their total content duration. Run a full fetch (fetchallchannelvideos) first for an accurate count.
+   *     description: Returns a versioned manual download selection count, plannedAction (download), knownSizeBytes (0) and unknownSizeCount, plus total content duration. The selectionVersion must be sent at confirmation; this read queues nothing. Run a full fetch (fetchallchannelvideos) first for an accurate count.
    *     tags: [Channels]
    *     parameters:
    *       - in: path
@@ -1177,11 +1177,15 @@ module.exports = function createChannelRoutes({ verifyToken, channelModule, arch
    *         application/json:
    *           schema:
    *             type: object
+   *             required: [selectionVersion]
    *             properties:
    *               tabType:
    *                 type: string
    *                 enum: [videos, shorts, streams]
    *                 default: videos
+   *               selectionVersion:
+   *                 type: string
+   *                 description: Required version from the preview; changed selections or policies return 409.
    *               overrideSettings:
    *                 type: object
    *                 description: Optional per-run overrides. allowRedownload is not supported here and is ignored (previously downloaded videos are always excluded).
@@ -1218,7 +1222,7 @@ module.exports = function createChannelRoutes({ verifyToken, channelModule, arch
    *       404:
    *         description: Channel not found
    *       409:
-   *         description: Downloads are paused because a storage limit was reached (Settings > Storage Limits); the error message gives the reason
+   *         description: Preview is missing or stale (preview again), or downloads are paused by a storage limit (Settings > Storage Limits); the error message gives the reason
    *         content:
    *           application/json:
    *             schema:
@@ -1237,6 +1241,10 @@ module.exports = function createChannelRoutes({ verifyToken, channelModule, arch
       return res.status(400).json({ error: 'Invalid tabType' });
     }
 
+    if (typeof req.body?.selectionVersion !== 'string') {
+      return res.status(409).json({ error: 'Preview the backlog again before confirming.' });
+    }
+
     const overrideResult = validateOverrideSettings(req.body?.overrideSettings);
     if (!overrideResult.ok) {
       return res.status(400).json({ error: 'Invalid overrideSettings' });
@@ -1246,12 +1254,16 @@ module.exports = function createChannelRoutes({ verifyToken, channelModule, arch
       const result = await channelDownloadAllModule.startDownloadAll(
         channelId,
         tabType,
-        overrideResult.value || {}
+        overrideResult.value || {},
+        req.body.selectionVersion
       );
       res.status(202).json({ status: 'accepted', queued: result.queued });
     } catch (error) {
       if (error.message === 'CHANNEL_NOT_FOUND') {
         return res.status(404).json({ error: 'Channel not found' });
+      }
+      if (error.message === 'STALE_PREVIEW') {
+        return res.status(409).json({ error: 'The selection changed. Preview the backlog again before confirming.' });
       }
       if (storageGuard.isPausedError(error)) {
         return res.status(409).json({ error: error.message });

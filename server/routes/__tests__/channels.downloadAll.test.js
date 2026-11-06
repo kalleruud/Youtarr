@@ -138,7 +138,7 @@ describe('POST /api/channels/:channelId/download-all', () => {
     const handler = getHandler('post', DOWNLOAD_PATH, deps);
     const req = {
       params: { channelId: 'UC123' },
-      body: { tabType: 'videos', overrideSettings: { resolution: '720' } },
+      body: { selectionVersion: 'version', tabType: 'videos', overrideSettings: { resolution: '720' } },
       log: loggerMock,
     };
     const res = createResponse();
@@ -148,7 +148,8 @@ describe('POST /api/channels/:channelId/download-all', () => {
     expect(deps.channelDownloadAllModule.startDownloadAll).toHaveBeenCalledWith(
       'UC123',
       'videos',
-      { resolution: '720' }
+      { resolution: '720' },
+      'version'
     );
     expect(res.status).toHaveBeenCalledWith(202);
     expect(res.json).toHaveBeenCalledWith({ status: 'accepted', queued: 42 });
@@ -159,7 +160,7 @@ describe('POST /api/channels/:channelId/download-all', () => {
     deps.channelDownloadAllModule.startDownloadAll.mockResolvedValue({ queued: 1 });
 
     const handler = getHandler('post', DOWNLOAD_PATH, deps);
-    const req = { params: { channelId: 'UC123' }, body: {}, log: loggerMock };
+    const req = { params: { channelId: 'UC123' }, body: { selectionVersion: 'version',}, log: loggerMock };
     const res = createResponse();
 
     await handler(req, res);
@@ -167,7 +168,8 @@ describe('POST /api/channels/:channelId/download-all', () => {
     expect(deps.channelDownloadAllModule.startDownloadAll).toHaveBeenCalledWith(
       'UC123',
       'videos',
-      {}
+      {},
+      'version'
     );
   });
 
@@ -177,7 +179,7 @@ describe('POST /api/channels/:channelId/download-all', () => {
     const handler = getHandler('post', DOWNLOAD_PATH, deps);
     const req = {
       params: { channelId: 'UC123' },
-      body: { overrideSettings: { resolution: '999' } },
+      body: { selectionVersion: 'version', overrideSettings: { resolution: '999' } },
       log: loggerMock,
     };
     const res = createResponse();
@@ -193,7 +195,7 @@ describe('POST /api/channels/:channelId/download-all', () => {
     const deps = buildDeps();
 
     const handler = getHandler('post', DOWNLOAD_PATH, deps);
-    const req = { params: { channelId: 'UC123' }, body: { tabType: 'nope' }, log: loggerMock };
+    const req = { params: { channelId: 'UC123' }, body: { selectionVersion: 'version', tabType: 'nope' }, log: loggerMock };
     const res = createResponse();
 
     await handler(req, res);
@@ -209,7 +211,7 @@ describe('POST /api/channels/:channelId/download-all', () => {
     );
 
     const handler = getHandler('post', DOWNLOAD_PATH, deps);
-    const req = { params: { channelId: 'UCmissing' }, body: {}, log: loggerMock };
+    const req = { params: { channelId: 'UCmissing' }, body: { selectionVersion: 'version',}, log: loggerMock };
     const res = createResponse();
 
     await handler(req, res);
@@ -225,7 +227,7 @@ describe('POST /api/channels/:channelId/download-all', () => {
     );
 
     const handler = getHandler('post', DOWNLOAD_PATH, deps);
-    const req = { params: { channelId: 'UC123' }, body: {}, log: loggerMock };
+    const req = { params: { channelId: 'UC123' }, body: { selectionVersion: 'version',}, log: loggerMock };
     const res = createResponse();
 
     await handler(req, res);
@@ -239,7 +241,7 @@ describe('POST /api/channels/:channelId/download-all', () => {
     deps.channelDownloadAllModule.startDownloadAll.mockRejectedValue(new Error('boom'));
 
     const handler = getHandler('post', DOWNLOAD_PATH, deps);
-    const req = { params: { channelId: 'UC123' }, body: {}, log: loggerMock };
+    const req = { params: { channelId: 'UC123' }, body: { selectionVersion: 'version',}, log: loggerMock };
     const res = createResponse();
 
     await handler(req, res);
@@ -248,4 +250,12 @@ describe('POST /api/channels/:channelId/download-all', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Failed to start channel download-all' });
     expect(loggerMock.error).toHaveBeenCalled();
   });
+});
+
+test('requires an explicit preview version before enqueueing', async () => {
+  const deps = buildDeps();
+  const res = createResponse();
+  await getHandler('post', DOWNLOAD_PATH, deps)({ params: { channelId: 'UC123' }, body: {}, log: loggerMock }, res);
+  expect(res.status).toHaveBeenCalledWith(409);
+  expect(deps.channelDownloadAllModule.startDownloadAll).not.toHaveBeenCalled();
 });

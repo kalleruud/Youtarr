@@ -3,10 +3,11 @@ import { CheckCircle as CheckCircleIcon, CloudOff as CloudOffIcon, Lock as LockI
 import { ChannelVideo } from '../types/ChannelVideo';
 import { getRemovalState } from './videoRemoval';
 
-export type VideoStatus = 'never_downloaded' | 'downloaded' | 'missing' | 'deleted' | 'members_only' | 'ignored' | 'queued' | 'downloading';
+export type VideoStatus = 'never_downloaded' | 'downloaded' | 'missing' | 'deleted' | 'members_only' | 'ignored' | 'queued' | 'downloading' | 'unavailable';
 
 export const getVideoStatus = (video: ChannelVideo): VideoStatus => {
   if (video.activity) return video.activity;
+  if (video.youtube_removed && !video.added) return 'unavailable';
   if (video.ignored) {
     return 'ignored';
   }
@@ -74,6 +75,8 @@ export const getStatusLabel = (status: VideoStatus) => {
       return 'Downloading…';
     case 'downloaded':
       return 'Downloaded';
+    case 'unavailable':
+      return 'Unavailable on YouTube';
     case 'missing':
       return 'Missing';
     case 'deleted':

@@ -145,6 +145,7 @@ function DownloadAllVideosDialog({
         </DialogTitle>
 
         <DialogContent>
+          <p>Explicit backlog download; automatic stream policies do not apply. Storage size is unknown until download. Existing copies are kept.</p>
           <div style={{ paddingTop: 8 }}>
             {preparing && (
               <>
@@ -171,7 +172,7 @@ function DownloadAllVideosDialog({
 
             {!preparing && preview && preview.count === 0 && (
               <Alert severity="info">
-                Every known video in this tab has already been downloaded.
+                No known videos in this tab are eligible. Downloaded, archived, active, unavailable, ignored and upcoming videos are excluded.
               </Alert>
             )}
 
@@ -211,6 +212,7 @@ function DownloadAllVideosDialog({
         </DialogContent>
 
         <DialogActions>
+          <Button onClick={() => fetchPreview(tabType)} disabled={preparing || starting}>Refresh preview</Button>
           <Button onClick={onClose} variant="contained" color="primary" autoFocus>
             Cancel
           </Button>

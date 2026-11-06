@@ -1,3 +1,4 @@
+import AcquisitionStrategy from '../shared/AcquisitionStrategy';
 import React, { useState, useEffect } from 'react';
 import {
   Dialog,
@@ -203,6 +204,7 @@ function ChannelSettingsDialog({
     { id: 'ratings', label: 'Ratings', icon: <RatingIcon size={18} /> },
     { id: 'tags', label: 'Tags', icon: <TagIcon size={18} /> },
     { id: 'autoremoval', label: 'Auto-Removal', icon: <AutoRemovalIcon size={18} /> },
+    { id: 'strategy', label: 'Strategy', icon: <SettingsIcon size={18} /> },
     { id: 'artwork', label: 'Artwork', icon: <ArtworkIcon size={18} /> }
   ];
 
@@ -1033,6 +1035,8 @@ function ChannelSettingsDialog({
             />
           </div>
         );
+      case 'strategy':
+        return <AcquisitionStrategy endpoint={`/api/channels/${channelId}/acquisition-policy`} token={token} />;
       case 'artwork':
         return <ChannelArtworkSection channelId={channelId} token={token} />;
       default:
@@ -1057,7 +1061,7 @@ function ChannelSettingsDialog({
           <Tabs
             value={activeSection}
             onChange={(_, newValue) => setActiveSection(String(newValue))}
-            variant="fullWidth"
+            variant="scrollable"
           >
             {sections.map(section => (
               <Tab

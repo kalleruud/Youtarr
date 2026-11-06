@@ -10,6 +10,7 @@ import userEvent from '@testing-library/user-event';
 import { VideoModalData } from '../types';
 
 jest.mock('../components/EpisodeIdentity', () => () => null);
+jest.mock('../../AcquisitionStrategy', () => () => null);
 
 // Mock axios
 jest.mock('axios', () => ({
