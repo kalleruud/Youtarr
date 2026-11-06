@@ -825,16 +825,18 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           const provenance = resolveCaptionProvenance({ fileName: file, youtubeId: id, info: jsonData });
           const categories = cutMatch ? Buffer.from(cutMatch[1], 'hex').toString('utf8').split(',') : [];
           const cutCaptions = cutMatch && resolveCutCaptions({ state: captionState, videoPath, fileName: file, youtubeId: id, info: jsonData, categories, actualDuration });
-          const result = await publishCaption({
-            subtitlePath,
-            backupRoot: path.join(configModule.getJobsPath(), 'caption-originals'),
-            mediaRoot: configModule.directoryPath,
-            provenance,
-            timeline: cutCaptions ? 'source' : resolveCaptionTimeline({ contract, state: captionState, videoPath, fileName: file, youtubeId: id }),
-            source: cutCaptions?.source,
-            timingMap: cutCaptions?.timingMap,
-            destinationPath: path.join(targetVideoDirectory, file),
-          });
+          const result = contract === 'inexact-caption-cuts'
+            ? { status: 'skipped', reason: 'SponsorBlock removal without accurate cuts; final caption timing cannot be verified' }
+            : await publishCaption({
+              subtitlePath,
+              backupRoot: path.join(configModule.getJobsPath(), 'caption-originals'),
+              mediaRoot: configModule.directoryPath,
+              provenance,
+              timeline: cutCaptions ? 'source' : resolveCaptionTimeline({ contract, state: captionState, videoPath, fileName: file, youtubeId: id }),
+              source: cutCaptions?.source,
+              timingMap: cutCaptions?.timingMap,
+              destinationPath: path.join(targetVideoDirectory, file),
+            });
           if (result.status === 'published' || ((result.status === 'warning' || result.status === 'skipped') && await fs.pathExists(path.join(targetVideoDirectory, file)))) protectedCaptions.add(file);
           if (result.status === 'warning' || result.status === 'skipped') {
             logger.warn({ subtitlePath, reason: result.reason, err: result.error }, '[Post-Process] Caption normalization skipped');

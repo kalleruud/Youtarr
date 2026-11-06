@@ -36,6 +36,7 @@
     "music_offtopic": false
   },
   "sponsorblockApiUrl": "",
+  "sponsorblockAccurateCuts": false,
   "downloadSocketTimeoutSeconds": 30,
   "downloadThrottledRate": "100K",
   "downloadRetryCount": 2,

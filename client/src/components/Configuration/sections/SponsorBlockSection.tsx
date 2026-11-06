@@ -85,6 +85,25 @@ export const SponsorBlockSection: React.FC<SponsorBlockSectionProps> = ({
               <Typography variant="caption" color="text.secondary" style={{ marginTop: 4, display: 'block' }}>
                 Remove: Cuts out segments entirely. Mark: Creates chapter markers for easy skipping.
               </Typography>
+              {config.sponsorblockAction === 'remove' && (
+                <>
+                  <FormControlLabel
+                    style={{ marginTop: 8 }}
+                    control={
+                      <Checkbox
+                        checked={config.sponsorblockAccurateCuts}
+                        onChange={(e) => onConfigChange({ sponsorblockAccurateCuts: e.target.checked })}
+                      />
+                    }
+                    label="Accurate cuts (re-encode)"
+                  />
+                  <Typography variant="caption" color="text.secondary" style={{ display: 'block' }}>
+                    Cuts exactly at segment boundaries. Re-encodes video and audio with FFmpeg defaults: codecs can change
+                    (e.g. VP9/Opus to H.264/Vorbis), processing takes longer, and quality can drop. Needed for caption
+                    normalization when segments are removed.
+                  </Typography>
+                </>
+              )}
             </Grid>
 
             <Grid item xs={12} md={6}>

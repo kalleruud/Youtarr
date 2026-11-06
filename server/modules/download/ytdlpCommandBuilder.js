@@ -171,7 +171,7 @@ class YtdlpCommandBuilder {
 
       if (config.sponsorblockAction === 'remove') {
         args.push('--sponsorblock-remove', categoriesStr);
-        if (config.subtitlesEnabled) args.push('--force-keyframes-at-cuts');
+        if (config.sponsorblockAccurateCuts === true) args.push('--force-keyframes-at-cuts');
       } else if (config.sponsorblockAction === 'mark') {
         args.push('--sponsorblock-mark', categoriesStr);
       }
@@ -470,11 +470,16 @@ class YtdlpCommandBuilder {
     const removeIndex = sponsorArgs.indexOf('--sponsorblock-remove');
     const categories = removeIndex < 0 ? '' : Buffer.from(sponsorArgs[removeIndex + 1]).toString('hex');
     const trusted = this.buildCustomArgs(config).length === 0;
+    // Without --force-keyframes-at-cuts the cuts land on keyframes rather than
+    // the SponsorBlock ranges, so the final caption timeline cannot be mapped.
+    let contract = 'unknown-caption-timeline';
+    if (trusted && !categories) contract = 'managed-caption-v1';
+    else if (trusted && config.sponsorblockAccurateCuts === true) contract = `managed-caption-cuts-${categories}`;
+    else if (trusted) contract = 'inexact-caption-cuts';
     const nonce = crypto.randomBytes(16).toString('hex');
     return [
-      '--ignore-config', '--no-plugin-dirs',
       '--print-to-file', 'after_move:%(.{id,filepath,requested_subtitles,__real_download,sponsorblock_chapters,duration})j', `${outputPath}.caption-state-${nonce}.json`,
-      '--exec', `after_move:node ${path.resolve(__dirname, '../videoDownloadPostProcessFiles.js')} {} ${trusted ? (categories ? `managed-caption-cuts-${categories}` : 'managed-caption-v1') : 'unknown-caption-timeline'} ${nonce}`,
+      '--exec', `after_move:node ${path.resolve(__dirname, '../videoDownloadPostProcessFiles.js')} {} ${contract} ${nonce}`,
     ];
   }
 

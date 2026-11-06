@@ -97,6 +97,7 @@ export const CONFIG_FIELDS = {
     trackChanges: true
   },
   sponsorblockApiUrl: { default: '', trackChanges: true },
+  sponsorblockAccurateCuts: { default: false, trackChanges: true },
 
   // Download performance
   downloadSocketTimeoutSeconds: { default: 30, trackChanges: true },
@@ -249,6 +250,7 @@ export const DEFAULT_CONFIG: ConfigState = {
   sponsorblockAction: CONFIG_FIELDS.sponsorblockAction.default,
   sponsorblockCategories: CONFIG_FIELDS.sponsorblockCategories.default,
   sponsorblockApiUrl: CONFIG_FIELDS.sponsorblockApiUrl.default,
+  sponsorblockAccurateCuts: CONFIG_FIELDS.sponsorblockAccurateCuts.default,
   downloadSocketTimeoutSeconds: CONFIG_FIELDS.downloadSocketTimeoutSeconds.default,
   downloadThrottledRate: CONFIG_FIELDS.downloadThrottledRate.default,
   downloadRetryCount: CONFIG_FIELDS.downloadRetryCount.default,

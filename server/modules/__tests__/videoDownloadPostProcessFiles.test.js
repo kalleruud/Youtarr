@@ -836,6 +836,22 @@ describe('videoDownloadPostProcessFiles', () => {
         );
       });
 
+      it('skips normalization and keeps the existing destination for SponsorBlock removal without accurate cuts', async () => {
+        const { moveWithRetries } = require('../filesystem');
+        const destination = `/library/Channel/${autoSrt}`;
+        setupTempDownloadWithSubtitles({ subtitlesEnabled: true });
+        process.argv = ['node', 'script', tempVideoPath, 'inexact-caption-cuts', 'a'.repeat(32)];
+        fs.existsSync.mockImplementation((file) => file === tempJsonPath || file === finalVideoPath || file === `${tempVideoDir}/${autoSrt}`);
+        fs.pathExists.mockImplementation(async (file) => file === destination);
+        await loadModule();
+        await settleAsync();
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ subtitlePath: `${tempVideoDir}/${autoSrt}`, reason: expect.stringContaining('accurate cuts') }),
+          '[Post-Process] Caption normalization skipped'
+        );
+        expect(moveWithRetries).not.toHaveBeenCalledWith(`${tempVideoDir}/${autoSrt}`, destination, expect.any(Object));
+      });
+
       it('leaves every subtitle file alone when custom yt-dlp args choose the subtitle languages', async () => {
         setupTempDownloadWithSubtitles({ subtitlesEnabled: true, ytdlpCustomArgs: '--sub-langs en,en-orig' });
 
