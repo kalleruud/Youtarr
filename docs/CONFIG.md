@@ -425,6 +425,13 @@ Sync is one-way (server -> Youtarr). Non-owner Plex users come from the server's
 - **Description**: Generate backdrop image files for Emby and Jellyfin background art
 - **Note**: Creates `backdrop.jpg` in each channel directory (from the channel's YouTube banner) and a `-backdrop.jpg` file alongside each video (copy of the video thumbnail). When enabled, channel-level backdrops are backfilled for existing channel folders; video-level backdrops are created for new downloads only.
 
+### Portrait Show Artwork
+- **Config Key**: `tvShowArtwork`
+- **Type**: `boolean`
+- **Default**: `false`
+- **Description**: Publish 2:3 portrait show posters and landscape episode thumbnails for Jellyfin TV (Shows) libraries
+- **Note**: Requires `writeChannelPosters`. Each channel folder's `poster.jpg` becomes a 2:3 (1000x1500) show poster instead of the square channel avatar: the owner's uploaded poster when one is selected, else an upstream image already shaped like a poster, else a deterministic composition of the channel avatar and title on a blurred backdrop (never a stretched or cropped image). Each new download also gets `<video name>-thumb.jpg`, a byte-for-byte copy of its original 16:9 YouTube thumbnail, which Jellyfin uses as the episode thumbnail. A `poster.jpg` Youtarr did not write (not its previous poster, not the matching cached square avatar copy) is kept unless the owner uploads a poster. Existing channel folders are updated the next time the channel list loads; existing episodes get their `-thumb.jpg` from **Regenerate & republish** in the channel's Artwork settings. Posters, pins and uploads are managed per channel under Channel Settings > Artwork; see [Jellyfin](media-servers/jellyfin.md#portrait-show-posters-and-episode-thumbnails).
+
 ### Prefix Channel Name In Embedded Title
 - **Config Key**: `prefixChannelNameInTitle`
 - **Type**: `boolean`

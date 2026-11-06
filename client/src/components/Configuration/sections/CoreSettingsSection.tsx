@@ -521,6 +521,30 @@ export const CoreSettingsSection: React.FC<CoreSettingsSectionProps> = ({
                     <FormControlLabel
                       control={
                         <Switch
+                          name="tvShowArtwork"
+                          checked={config.tvShowArtwork}
+                          onChange={handleCheckboxChange}
+                          disabled={!config.writeChannelPosters}
+                        />
+                      }
+                      label={
+                        <Box className="flex items-center">
+                          Portrait show posters for Jellyfin TV
+                          <InfoTooltip
+                            text="Write a 2:3 show poster (uploaded, or composed from the channel avatar and title) as each channel's poster.jpg, and a -thumb.jpg episode thumbnail from each video's original 16:9 thumbnail. Manage each channel's poster under Channel Settings > Artwork. Requires channel posters."
+                            onMobileClick={onMobileTooltipClick}
+                          />
+                        </Box>
+                      }
+                    />
+                  </FormControl>
+                </Grid>
+
+                <Grid item xs={12} md={6} className="mt-3">
+                  <FormControl>
+                    <FormControlLabel
+                      control={
+                        <Switch
                           name="prefixChannelNameInTitle"
                           checked={config.prefixChannelNameInTitle}
                           onChange={handleCheckboxChange}

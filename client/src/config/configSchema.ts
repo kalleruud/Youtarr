@@ -124,6 +124,7 @@ export const CONFIG_FIELDS = {
   libraryOutputProfile: { default: 'movie' as LibraryOutputProfile, trackChanges: true },
   writeVideoFanart: { default: false, trackChanges: true },
   writeBackdropImages: { default: false, trackChanges: true },
+  tvShowArtwork: { default: false, trackChanges: true },
   prefixChannelNameInTitle: { default: true, trackChanges: true },
 
   // Notifications
@@ -268,6 +269,7 @@ export const DEFAULT_CONFIG: ConfigState = {
   libraryOutputProfile: CONFIG_FIELDS.libraryOutputProfile.default,
   writeVideoFanart: CONFIG_FIELDS.writeVideoFanart.default,
   writeBackdropImages: CONFIG_FIELDS.writeBackdropImages.default,
+  tvShowArtwork: CONFIG_FIELDS.tvShowArtwork.default,
   prefixChannelNameInTitle: CONFIG_FIELDS.prefixChannelNameInTitle.default,
   notificationsEnabled: CONFIG_FIELDS.notificationsEnabled.default,
   appriseUrls: CONFIG_FIELDS.appriseUrls.default,

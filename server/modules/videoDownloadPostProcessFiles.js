@@ -13,6 +13,8 @@ const { selectSubtitleFilesToPrune } = require('./download/subtitleSidecarPruner
 const { JobVideoDownload } = require('../models');
 const videoPersistence = require('./videoPersistence');
 const tvPublication = require('./tvPublication');
+const channelArtworkModule = require('./channelArtworkModule');
+const { prepareEpisodeArtwork, publishEpisodeArtwork } = require('./artwork/episodeArtwork');
 const { VIDEO_PERSISTED_MARKER } = require('./constants/outputMarkers');
 const logger = require('../logger');
 const logLevelSync = require('./logLevelSync');
@@ -240,6 +242,13 @@ async function downloadChannelThumbnailIfMissing(channelId) {
 // Helper function to copy channel thumb as poster.jpg to channel folder
 async function copyChannelPosterIfNeeded(channelId, channelFolderPath) {
   if (!shouldWriteChannelPosters()) {
+    return;
+  }
+
+  if (channelArtworkModule.isEnabled()) {
+    // Portrait show poster (2:3) instead of the square avatar copy.
+    await downloadChannelThumbnailIfMissing(channelId);
+    await channelArtworkModule.syncChannel(channelId, { folderPath: channelFolderPath });
     return;
   }
 
@@ -1002,6 +1011,13 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
       } catch (err) {
         logger.warn({ err }, '[Post-Process] Error creating video backdrop');
       }
+    }
+
+    // Jellyfin episode thumbnail: <stem>-thumb.jpg, a byte copy of the
+    // original landscape YouTube thumbnail (never cropped or resized).
+    // TV publisher owns the staged episode thumbnail.
+    if (!tvPublish && channelArtworkModule.isEnabled() && !/\.mp3$/i.test(finalVideoPath)) {
+      publishEpisodeArtwork(prepareEpisodeArtwork({ filePath: finalVideoPath }), { logger });
     }
 
     // Copy channel thumbnail as poster.jpg to channel folder (must be done AFTER all moves)

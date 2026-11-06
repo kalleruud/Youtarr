@@ -12,6 +12,7 @@ const {
   resolveChannelFolderName,
 } = require('../filesystem');
 const channelYtdlpExecutor = require('./channelYtdlpExecutor');
+const channelArtworkModule = require('../channelArtworkModule');
 
 class ChannelThumbnails {
   /**
@@ -29,6 +30,14 @@ class ChannelThumbnails {
       imagePath,
       `channelthumb-${channelId}-small.jpg`
     );
+
+    // Keep the full-size avatar for 2:3 show poster composition; the
+    // resized copy below stays the app's channel thumbnail.
+    try {
+      await fsPromises.copyFile(realImagePath, path.join(imagePath, `channelavatar-${channelId}.jpg`));
+    } catch (err) {
+      logger.debug({ err, channelId }, 'Could not keep full-size channel avatar');
+    }
 
     try {
       // Argument array, no shell: paths containing quotes, $ or backticks stay literal.
@@ -265,7 +274,10 @@ class ChannelThumbnails {
         }
         if (!fs.existsSync(channelFolderPath)) continue;
 
-        if (shouldWritePosters) {
+        if (shouldWritePosters && channelArtworkModule.isEnabled(config)) {
+          // Portrait show artwork replaces the square avatar copy.
+          await channelArtworkModule.syncChannel(channel.channel_id, { folderPath: channelFolderPath });
+        } else if (shouldWritePosters) {
           this.copyChannelImageIfMissing(
             path.join(imageDir, `channelthumb-${channel.channel_id}.jpg`),
             path.join(channelFolderPath, 'poster.jpg'),

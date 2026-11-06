@@ -6,6 +6,7 @@ const channelIdentity = require('./channelIdentity');
 const channelMappers = require('./channelMappers');
 const channelMetadataFetcher = require('./channelMetadataFetcher');
 const channelThumbnails = require('./channelThumbnails');
+const channelArtworkModule = require('../channelArtworkModule');
 const tabManager = require('./tabManager');
 const tabVideoCounts = require('./tabVideoCounts');
 
@@ -177,6 +178,10 @@ class ChannelProvisioning {
     logger.info('Channel thumbnail processed successfully');
 
     await channelThumbnails.processChannelBanner(channelData, properChannelId);
+
+    // A new avatar may change the automatic show poster; manual and pinned
+    // posters are kept. Best-effort and a no-op unless tvShowArtwork is on.
+    await channelArtworkModule.syncChannel(properChannelId);
 
     // When skipTabDetection is true (e.g. bulk import), leave available_tabs as null
     // so the frontend's lazy-load system detects tabs on first channel page visit.
