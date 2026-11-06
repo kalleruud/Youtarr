@@ -242,6 +242,33 @@ describe('upload validation', () => {
   });
 });
 
+describe('Jellyfin TV library output profile', () => {
+  const showDir = () => path.join(mockState.libraryDir, 'Pawel Code Stuff [UC1]');
+
+  beforeEach(() => {
+    mockState.config.libraryOutputProfile = 'jellyfinTv';
+  });
+
+  test('publishes poster.jpg into the existing TV show folder', async () => {
+    fs.mkdirSync(showDir());
+    await artwork.publishPoster('UC1');
+    expect(fs.readdirSync(showDir())).toEqual(['poster.jpg']);
+  });
+
+  test('asks Jellyfin to refresh the TV show folder', async () => {
+    fs.mkdirSync(showDir());
+    const refreshFolderImages = jest.fn(async () => ({ status: 'refreshed', message: 'ok' }));
+    mockState.adapters = [{ refreshFolderImages }];
+    await artwork.requestRefresh('UC1');
+    expect(refreshFolderImages).toHaveBeenCalledWith(showDir());
+  });
+
+  test('uses the regular channel folder until the show folder exists', async () => {
+    await artwork.publishPoster('UC1');
+    expect(fs.existsSync(folderPoster())).toBe(true);
+  });
+});
+
 describe('Jellyfin artwork refresh', () => {
   test('records that no Jellyfin server is configured', async () => {
     await artwork.publishPoster('UC1');

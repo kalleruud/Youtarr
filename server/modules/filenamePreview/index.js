@@ -5,8 +5,15 @@ const {
   composeVideoFileTemplate,
   composeVideoFolderName,
 } = require('../filesystem/constants');
+const {
+  buildShowFolderName,
+  buildSeasonFolderName,
+  buildEpisodeStem,
+} = require('../tvPublication/tvNaming');
 
 const SAMPLE_INFO_JSON_PATH = path.join(__dirname, 'sample-video.info.json');
+// Episode number shown for the sample in the Jellyfin TV preview.
+const SAMPLE_EPISODE_NUMBER = 1;
 
 // yt-dlp invocation per template is ~150-300ms locally and ~500-800ms in
 // constrained environments. Two parallel calls are issued per preview, so we
@@ -96,9 +103,31 @@ class FilenamePreview {
       folderLine,
       fileLineLength: fileLine.length,
       folderLineLength: folderLine.length,
+      ...this.previewTvLayout(),
     };
     this._cacheSet(prefix, result);
     return result;
+  }
+
+  /**
+   * Where the sample video lands under the Jellyfin TV output profile. The TV
+   * publisher names episodes itself, so the user's template does not apply;
+   * this renders the same naming rules (no yt-dlp) for the Settings preview.
+   * @returns {{tvLine: string, tvLineLength: number}}
+   */
+  previewTvLayout() {
+    if (!this._tvPreview) {
+      const sample = require(SAMPLE_INFO_JSON_PATH);
+      const season = Number(String(sample.upload_date).slice(0, 4));
+      const showFolder = buildShowFolderName(sample.channel || sample.uploader, sample.channel_id);
+      const showName = showFolder.slice(0, -` [${sample.channel_id}]`.length);
+      const stem = buildEpisodeStem({
+        showName, season, episode: SAMPLE_EPISODE_NUMBER, title: sample.title, youtubeId: sample.id,
+      });
+      const tvLine = [showFolder, buildSeasonFolderName(season), `${stem}.mp4`].join('/');
+      this._tvPreview = { tvLine, tvLineLength: tvLine.length };
+    }
+    return this._tvPreview;
   }
 
   /**
