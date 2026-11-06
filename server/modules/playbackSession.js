@@ -23,6 +23,10 @@ class PlaybackSession {
     process.once('exit', () => this.stopProcesses());
   }
 
+  hasReadyPlayback(videoId) {
+    return [...this.sessions.values()].some(s => s.videoId === videoId && s.file && !s.closing);
+  }
+
   async openPlayback(videoId, { signal } = {}) {
     if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw fail(400, 'Invalid video identity');
     if (signal?.aborted) throw fail(499, 'Playback cancelled');

@@ -6,7 +6,8 @@ then serves a file with Express HTTP byte ranges (including suffix ranges and
 `Content-Location` identifies `/api/playback/sessions/{sessionId}/media`; subsequent
 range requests can use either URL. `DELETE` on that asset closes its session.
 All three routes require the existing `verifyToken` authentication; nothing is
-public. Preparation is limited to ten requests per minute per client IP.
+public. Preparation is limited to ten requests per minute per client IP; ready cached
+range requests bypass that creation limit.
 
 ## Seek/resume design and tradeoff
 

@@ -3,7 +3,7 @@ const rateLimit = require('express-rate-limit');
 
 function createPlaybackRoutes({ verifyToken, playbackSession }) {
   const router = express.Router();
-  const limiter = rateLimit({ windowMs: 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many playback requests; retry later' } });
+  const limiter = rateLimit({ windowMs: 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false, skip: req => playbackSession.hasReadyPlayback?.(req.params.videoId) || false, message: { error: 'Too many playback requests; retry later' } });
   const errorResponse = (res, error) => {
     const status = error.status || 503;
     if (status === 503) res.set('Retry-After', '10');

@@ -48,3 +48,10 @@ test('upstream failure returns retryable error', async () => {
   expect(response.status).toBe(503);
   expect(response.headers['retry-after']).toBe('10');
 });
+test('cached range seeks bypass the preparation rate limit', async () => {
+  playback.hasReadyPlayback = () => true;
+  for (let index = 0; index < 12; index++) {
+    const response = await request(app).get('/api/playback/abcdefghijk').set('x-access-token', 'test').set('Range', 'bytes=0-1');
+    expect(response.status).toBe(206);
+  }
+});
