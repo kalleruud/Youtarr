@@ -490,4 +490,42 @@ describe('NfoGenerator', () => {
       expect(nfoContent).not.toContain('<year>');
     });
   });
+
+  describe('TV outputs', () => {
+    const episode = {
+      title: 'Episode', showTitle: 'Show', season: 2026, episode: 12, aired: '2026-04-01',
+      plot: 'Plot', youtubeId: 'vid12345678', durationSeconds: 61, genres: ['Education'], tags: ['t'],
+      rating: 'TV-PG', dateAdded: '2026-04-02 10:00:00',
+    };
+
+    it('builds an <episodedetails> document, not a relabeled <movie>', () => {
+      const xml = nfoGenerator.buildEpisodeNfo(episode);
+      expect([xml.includes('<episodedetails>'), xml.includes('<movie>')]).toEqual([true, false]);
+    });
+
+    it('carries season, episode, aired date and YouTube identity', () => {
+      const xml = nfoGenerator.buildEpisodeNfo(episode);
+      expect(['<season>2026</season>', '<episode>12</episode>', '<aired>2026-04-01</aired>',
+        '<uniqueid type="youtube" default="true">vid12345678</uniqueid>', '<runtime>2</runtime>', '<mpaa>TV-PG</mpaa>']
+        .filter((part) => !xml.includes(part))).toEqual([]);
+    });
+
+    it('omits dates when the aired date is unknown', () => {
+      expect(nfoGenerator.buildEpisodeNfo({ ...episode, aired: null })).not.toContain('<aired>');
+    });
+
+    it('strips characters XML 1.0 cannot carry', () => {
+      expect(nfoGenerator.buildEpisodeNfo({ ...episode, title: 'a\u0000b\u001Fc\uD800d & e' }))
+        .toContain('<title>abcd &amp; e</title>');
+    });
+
+    it('builds tvshow.nfo with the channel ID as identity', () => {
+      expect(nfoGenerator.buildTvShowNfo({ title: 'Show', plot: '', channelId: 'UC1' }))
+        .toContain('<uniqueid type="youtube" default="true">UC1</uniqueid>');
+    });
+
+    it('builds season.nfo with the season number', () => {
+      expect(nfoGenerator.buildSeasonNfo({ season: 2026 })).toContain('<seasonnumber>2026</seasonnumber>');
+    });
+  });
 });

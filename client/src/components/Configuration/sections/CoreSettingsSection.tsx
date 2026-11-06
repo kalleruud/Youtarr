@@ -29,6 +29,7 @@ import { ConfigurationCard } from '../common/ConfigurationCard';
 import { InfoTooltip } from '../common/InfoTooltip';
 import SubtitleLanguageSelector from '../SubtitleLanguageSelector';
 import { VideoFilenameTemplate } from './components/VideoFilenameTemplate';
+import { LibraryOutputProfileSelect } from './components/LibraryOutputProfileSelect';
 import { SubfolderAutocomplete } from '../../shared/SubfolderAutocomplete';
 import { ManageSubfoldersDialog } from '../../shared/ManageSubfoldersDialog';
 import { AddSubfolderDialog } from '../../shared/AddSubfolderDialog';
@@ -416,6 +417,14 @@ export const CoreSettingsSection: React.FC<CoreSettingsSectionProps> = ({
                 </Grid>
 
                 <Grid item xs={12} md={6} className="mt-3">
+                  <LibraryOutputProfileSelect
+                    value={config.libraryOutputProfile}
+                    onChange={(libraryOutputProfile) => onConfigChange({ libraryOutputProfile })}
+                    onMobileTooltipClick={onMobileTooltipClick}
+                  />
+                </Grid>
+
+                <Grid item xs={12} md={6} className="mt-3">
                   <FormControl>
                     <FormControlLabel
                       control={
@@ -701,6 +710,7 @@ export const CoreSettingsSection: React.FC<CoreSettingsSectionProps> = ({
                       saveRequirement={filenameTemplateSaveRequirement}
                       onPreviewSuccess={onFilenameTemplatePreviewSuccess}
                       channelPrefixEnabled={config.prefixChannelNameInTitle}
+                      outputProfile={config.libraryOutputProfile}
                     />
                   </Box>
                 </Grid>

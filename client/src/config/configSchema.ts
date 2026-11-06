@@ -14,6 +14,8 @@
 
 import { SponsorBlockCategories } from '../components/Configuration/types';
 
+export type LibraryOutputProfile = 'movie' | 'jellyfinTv';
+
 /**
  * Configuration field registry
  * Each field defines its default value and whether changes should be tracked
@@ -119,6 +121,8 @@ export const CONFIG_FIELDS = {
   // Kodi compatibility
   writeChannelPosters: { default: true, trackChanges: true },
   writeVideoNfoFiles: { default: true, trackChanges: true },
+  // 'movie' (per-video folders) or 'jellyfinTv' (channel = show, year = season)
+  libraryOutputProfile: { default: 'movie' as LibraryOutputProfile, trackChanges: true },
   writeVideoFanart: { default: false, trackChanges: true },
   writeBackdropImages: { default: false, trackChanges: true },
   tvShowArtwork: { default: false, trackChanges: true },
@@ -264,6 +268,7 @@ export const DEFAULT_CONFIG: ConfigState = {
   customCookiesUploaded: CONFIG_FIELDS.customCookiesUploaded.default,
   writeChannelPosters: CONFIG_FIELDS.writeChannelPosters.default,
   writeVideoNfoFiles: CONFIG_FIELDS.writeVideoNfoFiles.default,
+  libraryOutputProfile: CONFIG_FIELDS.libraryOutputProfile.default,
   writeVideoFanart: CONFIG_FIELDS.writeVideoFanart.default,
   writeBackdropImages: CONFIG_FIELDS.writeBackdropImages.default,
   tvShowArtwork: CONFIG_FIELDS.tvShowArtwork.default,

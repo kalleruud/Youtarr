@@ -413,6 +413,13 @@ Sync is one-way (server -> Youtarr). Non-owner Plex users come from the server's
 - **Description**: Generate NFO metadata files for Kodi/Jellyfin/Emby
 - **Note**: Creates .nfo XML files with video metadata
 
+### Library Output Profile
+- **Config Key**: `libraryOutputProfile`
+- **Type**: `string` (`"movie"` or `"jellyfinTv"`)
+- **Default**: `"movie"`
+- **Description**: How new video downloads are laid out. `movie` keeps the per-video folders and movie NFOs. `jellyfinTv` publishes each video as an episode for a Jellyfin **Shows** library: `Channel [channel-id]/Season <year>/Channel - S<year>E<nnn> - Title [video-id].<ext>` with `tvshow.nfo`, `season.nfo`, an `<episodedetails>` NFO, language-tagged subtitles and a `-thumb.jpg` thumbnail. See [Jellyfin TV (Shows) Output](media-servers/jellyfin.md#jellyfin-tv-shows-output).
+- **Note**: Only affects new downloads; existing files are not moved. MP3 downloads and videos without a known publication date keep the `movie` layout. Under `jellyfinTv`, `writeVideoNfoFiles` does not apply to episodes (their NFOs are always written).
+
 ### Write Video Fanart
 - **Config Key**: `writeVideoFanart`
 - **Type**: `boolean`

@@ -594,3 +594,51 @@ describe('GET /api/videos/:youtubeId/episode-identity', () => {
     expect(episodeAssignment.getStatus).toHaveBeenCalledWith('abcdefghijk');
   });
 });
+
+describe('POST /api/videos/:youtubeId/tv-metadata/regenerate', () => {
+  const makeHandler = (tvPublication) => {
+    const app = express();
+    app.use(createVideoDetailRoutes({ verifyToken: (req, res, next) => next(), tvPublication }));
+    return findRouteHandler(app, 'post', '/api/videos/:youtubeId/tv-metadata/regenerate');
+  };
+  const makeRes = () => ({ json: jest.fn(), status: jest.fn().mockReturnThis() });
+  const req = (youtubeId = 'abcdefghijk') => ({ params: { youtubeId }, log: { error: jest.fn() } });
+
+  test('returns the rewritten files', async () => {
+    const result = { mediaPath: '/lib/S [UC1]/Season 2026/x [abcdefghijk].mp4', written: ['a.nfo'], removed: [] };
+    const tvPublication = { isEnabled: jest.fn(() => true), regenerateMetadata: jest.fn().mockResolvedValue(result) };
+    const res = makeRes();
+    await makeHandler(tvPublication)(req(), res);
+    expect(res.json).toHaveBeenCalledWith(result);
+  });
+
+  test('returns 409 while the TV profile is off', async () => {
+    const tvPublication = { isEnabled: jest.fn(() => false), regenerateMetadata: jest.fn() };
+    const res = makeRes();
+    await makeHandler(tvPublication)(req(), res);
+    expect([res.status.mock.calls[0][0], tvPublication.regenerateMetadata.mock.calls.length]).toEqual([409, 0]);
+  });
+
+  test('returns 400 for an invalid YouTube ID', async () => {
+    const res = makeRes();
+    await makeHandler({ isEnabled: jest.fn(() => true) })(req('../x'), res);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  test.each([['not-found', 404], ['not-published', 409], ['metadata-missing', 409]])(
+    'maps %s to %i', async (code, status) => {
+      const err = Object.assign(new Error('nope'), { code });
+      const tvPublication = { isEnabled: jest.fn(() => true), regenerateMetadata: jest.fn().mockRejectedValue(err) };
+      const res = makeRes();
+      await makeHandler(tvPublication)(req(), res);
+      expect(res.status).toHaveBeenCalledWith(status);
+    }
+  );
+
+  test('returns 500 for unexpected failures', async () => {
+    const tvPublication = { isEnabled: jest.fn(() => true), regenerateMetadata: jest.fn().mockRejectedValue(new Error('disk')) };
+    const res = makeRes();
+    await makeHandler(tvPublication)(req(), res);
+    expect(res.json).toHaveBeenCalledWith({ error: 'Failed to regenerate TV episode metadata' });
+  });
+});

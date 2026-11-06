@@ -82,6 +82,107 @@ class NfoGenerator {
   }
 
   /**
+   * Escapes text for XML after removing characters XML 1.0 cannot carry
+   * (control codes other than tab/newline/CR, lone surrogates, U+FFFE/U+FFFF).
+   * Titles and descriptions come straight from YouTube, so they can hold any
+   * of these, and one bad character makes the whole NFO unreadable.
+   * @param {string} text
+   * @returns {string}
+   */
+  xmlText(text) {
+    if (text === null || text === undefined) return '';
+    const cleaned = String(text)
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '')
+      .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+    return this.escapeXml(cleaned);
+  }
+
+  _element(name, value, indent = '  ') {
+    if (value === null || value === undefined || value === '') return '';
+    return `${indent}<${name}>${this.xmlText(value)}</${name}>\n`;
+  }
+
+  /**
+   * Builds tvshow.nfo XML for a channel published as a TV show.
+   * @param {{title: string, plot?: string, channelId: string}} show
+   * @returns {string}
+   */
+  buildTvShowNfo({ title, plot, channelId }) {
+    let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+    xml += '<tvshow>\n';
+    xml += this._element('title', title || channelId);
+    xml += this._element('plot', plot);
+    xml += `  <uniqueid type="youtube" default="true">${this.xmlText(channelId)}</uniqueid>\n`;
+    xml += this._element('studio', 'YouTube');
+    xml += '</tvshow>\n';
+    return xml;
+  }
+
+  /**
+   * Builds season.nfo XML for a publication-year season.
+   * @param {{season: number}} params
+   * @returns {string}
+   */
+  buildSeasonNfo({ season }) {
+    let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+    xml += '<season>\n';
+    xml += this._element('title', String(season));
+    xml += this._element('seasonnumber', String(season));
+    xml += '</season>\n';
+    return xml;
+  }
+
+  /**
+   * Builds episode NFO XML (<episodedetails>) for one published video.
+   * @param {object} episode
+   * @param {string} episode.title - Episode title (the video title)
+   * @param {string} episode.showTitle - Show title (the channel)
+   * @param {number} episode.season - Assigned season (publication year)
+   * @param {number} episode.episode - Assigned episode number
+   * @param {string|null} episode.aired - YYYY-MM-DD
+   * @param {string} [episode.plot]
+   * @param {string} episode.youtubeId
+   * @param {number} [episode.durationSeconds]
+   * @param {string[]} [episode.genres]
+   * @param {string[]} [episode.tags]
+   * @param {string|null} [episode.rating] - Normalized rating code
+   * @param {string} episode.dateAdded - YYYY-MM-DD HH:mm:ss, kept across regenerations
+   * @returns {string}
+   */
+  buildEpisodeNfo(episode) {
+    const {
+      title, showTitle, season, episode: number, aired, plot, youtubeId,
+      durationSeconds, genres = [], tags = [], rating = null, dateAdded,
+    } = episode;
+    let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+    xml += '<episodedetails>\n';
+    xml += this._element('title', title || 'Unknown Title');
+    xml += this._element('showtitle', showTitle);
+    xml += this._element('season', String(season));
+    xml += this._element('episode', String(number));
+    xml += this._element('plot', plot);
+    if (youtubeId) {
+      xml += `  <uniqueid type="youtube" default="true">${this.xmlText(youtubeId)}</uniqueid>\n`;
+    }
+    if (aired) {
+      xml += this._element('aired', aired);
+      xml += this._element('premiered', aired);
+      xml += this._element('year', aired.substring(0, 4));
+    }
+    xml += this._element('dateadded', dateAdded);
+    xml += this._element('studio', showTitle);
+    for (const genre of genres) xml += this._element('genre', genre);
+    for (const tag of tags) xml += this._element('tag', tag);
+    xml += this._element('mpaa', rating);
+    if (durationSeconds > 0) {
+      xml += this._element('runtime', String(this.calculateRuntime(durationSeconds)));
+    }
+    xml += '</episodedetails>\n';
+    return xml;
+  }
+
+  /**
    * Generates and writes an NFO file for a video
    * @param {string} videoPath - Path to the video file
    * @param {object} jsonData - Parsed .info.json data

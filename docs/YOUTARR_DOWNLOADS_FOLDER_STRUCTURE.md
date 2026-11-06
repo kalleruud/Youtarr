@@ -93,6 +93,10 @@ YouTube Downloads/
 │       └── Channel - Title [id].jpg
 ```
 
+## Layout For the Jellyfin TV Output Profile
+
+With `libraryOutputProfile` set to `jellyfinTv`, new video downloads are published as `Channel [channel-id]/Season <year>/Channel - S<year>E<nnn> - Title [video-id].<ext>` with `tvshow.nfo`, `season.nfo` and per-episode sidecars sharing the media stem. Subfolder settings still apply (`__subfolder/Channel [channel-id]/...`). See [Jellyfin TV (Shows) Output](media-servers/jellyfin.md#jellyfin-tv-shows-output).
+
 ## The `__playlists__` Folder
 
 If you subscribe to any YouTube playlists, Youtarr creates a `__playlists__` folder at the top of your download directory and writes one `.m3u` file per playlist into it. The videos themselves still live in their channel folders; the `.m3u` is just a list that points at them.
