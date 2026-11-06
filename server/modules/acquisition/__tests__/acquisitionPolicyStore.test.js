@@ -1,0 +1,91 @@
+jest.mock('../../../db', () => {
+  const transaction = { LOCK: { UPDATE: 'UPDATE' } };
+  return { sequelize: { transaction: jest.fn(work => work(transaction)) }, transaction };
+});
+jest.mock('../../../models/acquisitionPolicy', () => ({
+  findOne: jest.fn(),
+  findAll: jest.fn(),
+  create: jest.fn(),
+  count: jest.fn(),
+}));
+
+const { UniqueConstraintError } = require('sequelize');
+const AcquisitionPolicy = require('../../../models/acquisitionPolicy');
+const store = require('../acquisitionPolicyStore');
+
+const row = (values) => ({ ...values, update: jest.fn(function update(next) { Object.assign(this, next); }) });
+
+beforeEach(() => jest.clearAllMocks());
+
+describe('acquisitionPolicyStore.set', () => {
+  test('creates the first selection at revision 1', async () => {
+    AcquisitionPolicy.findOne.mockResolvedValue(null);
+    AcquisitionPolicy.create.mockImplementation(async values => values);
+    const result = await store.set('channel', 'UC1', { delivery: 'stream' });
+    expect(result).toMatchObject({ delivery: 'stream', live: null, revision: 1 });
+  });
+
+  test('locks the row it updates', async () => {
+    AcquisitionPolicy.findOne.mockResolvedValue(null);
+    AcquisitionPolicy.create.mockImplementation(async values => values);
+    await store.set('channel', 'UC1', { delivery: 'stream' });
+    expect(AcquisitionPolicy.findOne).toHaveBeenCalledWith(expect.objectContaining({ lock: 'UPDATE' }));
+  });
+
+  test('changes only the given fields and bumps the revision', async () => {
+    const existing = row({ delivery_policy: 'stream', live_policy: 'record', revision: 3 });
+    AcquisitionPolicy.findOne.mockResolvedValue(existing);
+    const result = await store.set('channel', 'UC1', { live: null });
+    expect(result).toMatchObject({ delivery: 'stream', live: null, revision: 4 });
+  });
+
+  test('refuses a stale expected revision', async () => {
+    AcquisitionPolicy.findOne.mockResolvedValue(row({ revision: 2 }));
+    await expect(store.set('channel', 'UC1', { delivery: 'download' }, { expectedRevision: 1 }))
+      .rejects.toMatchObject({ code: 'REVISION_CONFLICT', currentRevision: 2 });
+  });
+
+  test('maps a first-write race to a revision conflict', async () => {
+    AcquisitionPolicy.findOne.mockResolvedValue(null);
+    AcquisitionPolicy.create.mockRejectedValue(new UniqueConstraintError({}));
+    await expect(store.set('video', 'aaaaaaaaaaa', { delivery: 'stream' })).rejects.toBeInstanceOf(store.PolicyRevisionConflictError);
+  });
+
+  test('records the channel of a video override', async () => {
+    AcquisitionPolicy.findOne.mockResolvedValue(null);
+    AcquisitionPolicy.create.mockImplementation(async values => values);
+    await store.set('video', 'aaaaaaaaaaa', { delivery: 'stream' }, { channelId: 'UC1' });
+    expect(AcquisitionPolicy.create).toHaveBeenCalledWith(expect.objectContaining({ channel_id: 'UC1', subject_id: 'aaaaaaaaaaa' }), expect.anything());
+  });
+});
+
+describe('acquisitionPolicyStore reads', () => {
+  test('a subject without a row inherits everything at revision 0', async () => {
+    AcquisitionPolicy.findOne.mockResolvedValue(null);
+    expect(await store.getGlobal()).toEqual({ delivery: null, live: null, revision: 0, updatedAt: null });
+  });
+
+  test('getChannelPolicies keys policies by channel id', async () => {
+    AcquisitionPolicy.findAll.mockResolvedValue([{ subject_id: 'UC1', delivery_policy: 'stream', live_policy: null, revision: 1 }]);
+    const policies = await store.getChannelPolicies(['UC1', 'UC1', null]);
+    expect(policies.get('UC1')).toMatchObject({ delivery: 'stream' });
+  });
+
+  test('getChannelPolicies skips the query for no channels', async () => {
+    await store.getChannelPolicies([]);
+    expect(AcquisitionPolicy.findAll).not.toHaveBeenCalled();
+  });
+
+  test('getVideoOverridesForChannels returns ids with their channel', async () => {
+    AcquisitionPolicy.findAll.mockResolvedValue([{ subject_id: 'aaaaaaaaaaa', channel_id: 'UC1', delivery_policy: 'download', live_policy: null, revision: 2 }]);
+    expect(await store.getVideoOverridesForChannels(['UC1'])).toEqual([
+      expect.objectContaining({ youtubeId: 'aaaaaaaaaaa', channelId: 'UC1', delivery: 'download' }),
+    ]);
+  });
+});
+
+test('maps a first-write deadlock to a revision conflict', async () => {
+  AcquisitionPolicy.findOne.mockResolvedValue(null);
+  AcquisitionPolicy.create.mockRejectedValue(Object.assign(new Error('Deadlock found'), { original: { code: 'ER_LOCK_DEADLOCK' } }));
+  await expect(store.set('channel', 'UC1', { delivery: 'stream' })).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+});
