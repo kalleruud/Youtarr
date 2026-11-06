@@ -12,8 +12,7 @@ jobs:
   release-rc:
     name: Build & Push RC Image
     runs-on: ubuntu-latest
-    # Skip if commit message contains [skip ci]
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: github.repository == 'DialmasterOrg/Youtarr' && !contains(github.event.head_commit.message, '[skip ci]')
     permissions:
       contents: read
       packages: write

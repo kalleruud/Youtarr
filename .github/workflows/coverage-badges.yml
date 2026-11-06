@@ -20,9 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     # Run on workflow_dispatch or when Production Release succeeds (skip if commit has [skip ci])
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       !contains(github.event.workflow_run.head_commit.message, '[skip ci]'))
+      github.repository == 'DialmasterOrg/Youtarr' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        !contains(github.event.workflow_run.head_commit.message, '[skip ci]')))
 
     steps:
       - name: Checkout code
