@@ -10,6 +10,8 @@ const tempPathManager = require('./download/tempPathManager');
 const downloadSettingsResolver = require('./download/downloadSettingsResolver');
 const YtdlpCommandBuilder = require('./download/ytdlpCommandBuilder');
 const { selectSubtitleFilesToPrune } = require('./download/subtitleSidecarPruner');
+const { publishCaption } = require('./download/captionPublication');
+const { resolveCaptionProvenance, resolveCaptionTimeline, resolveCutCaptions } = require('./download/captionProvenance');
 const { JobVideoDownload } = require('../models');
 const videoPersistence = require('./videoPersistence');
 const tvPublication = require('./tvPublication');
@@ -402,6 +404,15 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
   if (fs.existsSync(jsonPath)) {
     // Read the JSON file to get the upload_date
     const jsonData = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    let captionState;
+    const nonce = process.argv[4];
+    const captionStatePath = /^[a-f0-9]{32}$/.test(nonce || '') ? `${videoPath}.caption-state-${nonce}.json` : null;
+    try {
+      if (captionStatePath) captionState = JSON.parse(await fs.readFile(captionStatePath, 'utf8'));
+    } catch {
+      // Legacy/custom invocations have no trustworthy final-timeline evidence.
+    }
+    if (captionStatePath) await fs.remove(captionStatePath).catch(() => {});
 
     // Parse the upload_date (format: YYYYMMDD) into a Date object
     let uploadDate = null;
@@ -828,6 +839,38 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           await pruneSubtitleSidecars(videoDirectory, filesInDir, id, jsonData);
         } catch (err) {
           logger.warn({ err, videoDirectory }, '[Post-Process] Subtitle pruning failed; keeping every subtitle file');
+        }
+
+        const contract = process.argv[3] || '';
+        const cutMatch = /^managed-caption-cuts-([a-f0-9]+)$/.exec(contract);
+        let actualDuration;
+        if (cutMatch) {
+          const probe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath], { encoding: 'utf8', timeout: 30000 });
+          if (probe.status === 0 && typeof probe.stdout === 'string' && probe.stdout.trim()) actualDuration = Number(probe.stdout.trim());
+        }
+        for (const file of filesInDir) {
+          if (!isFileForVideo(file, id) || !/\.srt$/i.test(file) || !fs.existsSync(path.join(videoDirectory, file))) continue;
+          const subtitlePath = path.join(videoDirectory, file);
+          const provenance = resolveCaptionProvenance({ fileName: file, youtubeId: id, info: jsonData });
+          const categories = cutMatch ? Buffer.from(cutMatch[1], 'hex').toString('utf8').split(',') : [];
+          const cutCaptions = cutMatch && resolveCutCaptions({ state: captionState, videoPath, fileName: file, youtubeId: id, info: jsonData, categories, actualDuration });
+          const result = contract === 'inexact-caption-cuts'
+            ? { status: 'skipped', reason: 'SponsorBlock removal without accurate cuts; final caption timing cannot be verified' }
+            : await publishCaption({
+              subtitlePath,
+              backupRoot: path.join(configModule.getJobsPath(), 'caption-originals'),
+              mediaRoot: configModule.directoryPath,
+              provenance,
+              timeline: cutCaptions ? 'source' : resolveCaptionTimeline({ contract, state: captionState, videoPath, fileName: file, youtubeId: id }),
+              source: cutCaptions?.source,
+              timingMap: cutCaptions?.timingMap,
+              youtubeId: id,
+            });
+          // Captions are published in place, so the move below carries either
+          // the normalized track or, when skipped, yt-dlp's own track for this download.
+          if (result.status === 'warning' || result.status === 'skipped') {
+            logger.warn({ subtitlePath, reason: result.reason, err: result.error }, '[Post-Process] Caption normalization skipped; publishing the downloaded caption unchanged');
+          }
         }
 
         if (tvPublish) {

@@ -1040,6 +1040,53 @@ describe('YtdlpCommandBuilder', () => {
   });
 
   describe('getBaseCommandArgsForManualDownload', () => {
+    const enableSubtitledRemoval = () => {
+      mockConfig.sponsorblockEnabled = true;
+      mockConfig.subtitlesEnabled = true;
+      mockConfig.sponsorblockAction = 'remove';
+      mockConfig.sponsorblockCategories = { sponsor: true };
+    };
+
+    it('does not force keyframes at cuts for subtitled SponsorBlock removal by default', () => {
+      enableSubtitledRemoval();
+      const result = YtdlpCommandBuilder.getBaseCommandArgsForManualDownload();
+      expect(result).not.toContain('--force-keyframes-at-cuts');
+    });
+
+    it('marks the caption timeline inexact for SponsorBlock removal without accurate cuts', () => {
+      enableSubtitledRemoval();
+      const result = YtdlpCommandBuilder.getBaseCommandArgsForManualDownload();
+      expect(result[result.indexOf('--exec') + 1]).toMatch(/ inexact-caption-cuts [a-f0-9]{32}$/);
+    });
+
+    it('forces keyframes at cuts only when accurate cuts are enabled', () => {
+      enableSubtitledRemoval();
+      mockConfig.sponsorblockAccurateCuts = true;
+      const result = YtdlpCommandBuilder.getBaseCommandArgsForManualDownload();
+      expect(result).toContain('--force-keyframes-at-cuts');
+    });
+
+    it('requests cut evidence for SponsorBlock removal with accurate cuts', () => {
+      enableSubtitledRemoval();
+      mockConfig.sponsorblockAccurateCuts = true;
+      const result = YtdlpCommandBuilder.getBaseCommandArgsForManualDownload();
+      expect(result[result.indexOf('--print-to-file') + 1]).toContain('sponsorblock_chapters');
+      expect(result[result.indexOf('--exec') + 1]).toContain(`managed-caption-cuts-${Buffer.from('sponsor').toString('hex')}`);
+    });
+
+    it('treats the caption timeline as unknown when custom args are set, even with accurate cuts', () => {
+      enableSubtitledRemoval();
+      mockConfig.sponsorblockAccurateCuts = true;
+      mockConfig.ytdlpCustomArgs = '--concurrent-fragments 4';
+      const result = YtdlpCommandBuilder.getBaseCommandArgsForManualDownload();
+      expect(result[result.indexOf('--exec') + 1]).toContain(' unknown-caption-timeline ');
+    });
+
+    it('does not pass config-file or plugin overrides to yt-dlp', () => {
+      const result = YtdlpCommandBuilder.getBaseCommandArgsForManualDownload();
+      expect(result).toEqual(expect.not.arrayContaining(['--ignore-config', '--no-plugin-dirs']));
+    });
+
     it('should build command args without duration filter', () => {
       const result = YtdlpCommandBuilder.getBaseCommandArgsForManualDownload();
 
@@ -1060,7 +1107,8 @@ describe('YtdlpCommandBuilder', () => {
         arg !== '--match-filter' && manualArgs[i - 1] !== '--match-filter'
       );
 
-      expect(regularFiltered).toEqual(manualFiltered);
+      const stripNonce = args => args.map(arg => arg.replace(/(?<=caption-state-)[a-f0-9]{32}|(?<=managed-caption-v1 )[a-f0-9]{32}/g, 'NONCE'));
+      expect(stripNonce(regularFiltered)).toEqual(stripNonce(manualFiltered));
     });
 
     it('should use custom resolution when provided', () => {

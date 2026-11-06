@@ -307,6 +307,44 @@ describe('SponsorBlockSection Component', () => {
     });
   });
 
+  describe('Accurate Cuts Checkbox', () => {
+    test('is unchecked by default when segments are removed', () => {
+      const props = createSectionProps({
+        config: createConfig({ sponsorblockEnabled: true, sponsorblockAction: 'remove' }),
+      });
+      renderWithProviders(<SponsorBlockSection {...props} />);
+      expect(screen.getByRole('checkbox', { name: 'Accurate cuts (re-encode)' })).not.toBeChecked();
+    });
+
+    test('is hidden when segments are marked', () => {
+      const props = createSectionProps({
+        config: createConfig({ sponsorblockEnabled: true, sponsorblockAction: 'mark' }),
+      });
+      renderWithProviders(<SponsorBlockSection {...props} />);
+      expect(screen.queryByRole('checkbox', { name: 'Accurate cuts (re-encode)' })).not.toBeInTheDocument();
+    });
+
+    test('warns that audio and video are re-encoded', () => {
+      const props = createSectionProps({
+        config: createConfig({ sponsorblockEnabled: true, sponsorblockAction: 'remove' }),
+      });
+      renderWithProviders(<SponsorBlockSection {...props} />);
+      expect(screen.getByText(/Re-encodes video and audio with FFmpeg defaults/)).toBeInTheDocument();
+    });
+
+    test('enables accurate cuts when clicked', async () => {
+      const user = userEvent.setup();
+      const onConfigChange = jest.fn();
+      const props = createSectionProps({
+        config: createConfig({ sponsorblockEnabled: true, sponsorblockAction: 'remove' }),
+        onConfigChange,
+      });
+      renderWithProviders(<SponsorBlockSection {...props} />);
+      await user.click(screen.getByRole('checkbox', { name: 'Accurate cuts (re-encode)' }));
+      expect(onConfigChange).toHaveBeenCalledWith({ sponsorblockAccurateCuts: true });
+    });
+  });
+
   describe('Custom API URL Field', () => {
     test('displays current API URL value', async () => {
       const user = userEvent.setup();
