@@ -54,9 +54,11 @@ test('additive migration keeps existing rows and persists revisioned, case-sensi
     store.set('channel', 'UCnew', { delivery: 'stream' }),
     store.set('channel', 'UCnew', { delivery: 'download' }),
   ]);
-  const rejected = firstWrites.filter(r => r.status === 'rejected');
-  expect(rejected.every(r => r.reason.code === 'REVISION_CONFLICT')).toBe(true);
-  expect((await store.get('channel', 'UCnew')).revision).toBe(2 - rejected.length);
+  // The loser of the creation race (a duplicate key or a deadlock) writes again
+  // over the winner's row; any rejection is printed with its code and message.
+  expect(firstWrites.map(r => (r.status === 'fulfilled' ? 'ok'
+    : `${r.reason.code || r.reason.name}: ${r.reason.message}`))).toEqual(['ok', 'ok']);
+  expect((await store.get('channel', 'UCnew')).revision).toBe(2);
 
   await store.set('video', 'aaaaaaaaaaa', { delivery: 'download' }, { channelId: 'UCabc' });
   await store.set('video', 'bbbbbbbbbbb', { delivery: null }, { channelId: 'UCabc' });

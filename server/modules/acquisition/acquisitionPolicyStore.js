@@ -4,6 +4,11 @@ const AcquisitionPolicy = require('../../models/acquisitionPolicy');
 const { POLICY_SCOPES } = require('./policyValues');
 
 const GLOBAL_SUBJECT = 'global';
+const ER_LOCK_DEADLOCK = 1213;
+// db.js retries every failed query (retry.max with no match). Inside a
+// transaction that hides the real error: a deadlock rolls the transaction back,
+// so the retried query fails with "rollback has been called on this transaction".
+const SINGLE_ATTEMPT = { max: 1 };
 
 class PolicyRevisionConflictError extends Error {
   constructor(currentRevision) {
@@ -12,6 +17,15 @@ class PolicyRevisionConflictError extends Error {
     this.code = 'REVISION_CONFLICT';
     this.currentRevision = currentRevision;
   }
+}
+
+// Two first-time writers raced on the unique (scope, subject_id) key. InnoDB
+// reports that either as a duplicate or, when both held the gap lock of the
+// missing row, as a deadlock for the loser.
+function isCreationRace(err) {
+  if (err instanceof UniqueConstraintError) return true;
+  const original = err && err.original;
+  return Boolean(original) && (original.code === 'ER_LOCK_DEADLOCK' || original.errno === ER_LOCK_DEADLOCK);
 }
 
 function toPolicy(row) {
@@ -41,37 +55,46 @@ class AcquisitionPolicyStore {
 
   /**
    * Apply `changes` ({ delivery?, live? }; null clears to inherit, undefined
-   * leaves a field alone) and bump the revision, atomically.
+   * leaves a field alone) and bump the revision, atomically. A write that
+   * loses the race to create the row is tried once more against that row.
    * @throws {PolicyRevisionConflictError} when expectedRevision is stale
    */
-  async set(scope, subjectId, changes, { expectedRevision, channelId = null } = {}) {
+  async set(scope, subjectId, changes, options = {}) {
     try {
-      return await sequelize.transaction(async (transaction) => {
-        const where = { scope, subject_id: subjectId };
-        const row = await AcquisitionPolicy.findOne({ where, transaction, lock: transaction.LOCK.UPDATE });
-        const currentRevision = row ? row.revision : 0;
-        if (expectedRevision !== undefined && expectedRevision !== currentRevision) {
-          throw new PolicyRevisionConflictError(currentRevision);
-        }
-        const values = { updated_at: new Date(), revision: currentRevision + 1 };
-        if (changes.delivery !== undefined) values.delivery_policy = changes.delivery;
-        if (changes.live !== undefined) values.live_policy = changes.live;
-        if (channelId) values.channel_id = channelId;
-        if (row) {
-          await row.update(values, { transaction });
-          return toPolicy(row);
-        }
-        const created = await AcquisitionPolicy.create({ ...where, ...values }, { transaction });
-        return toPolicy(created);
-      });
+      return await this._write(scope, subjectId, changes, options);
     } catch (err) {
-      // Two first-time writers raced on the unique (scope, subject_id) key;
-      // InnoDB reports that either as a duplicate or, when both held the gap
-      // lock of the missing row, as a deadlock for the loser.
-      const deadlock = err && err.original && err.original.code === 'ER_LOCK_DEADLOCK';
-      if (err instanceof UniqueConstraintError || deadlock) throw new PolicyRevisionConflictError(0);
+      if (!isCreationRace(err)) throw err;
+    }
+    // Another writer created the row first; it exists now, so this attempt
+    // updates it, or reports a conflict when expectedRevision is now stale.
+    try {
+      return await this._write(scope, subjectId, changes, options);
+    } catch (err) {
+      if (isCreationRace(err)) throw new PolicyRevisionConflictError(0);
       throw err;
     }
+  }
+
+  _write(scope, subjectId, changes, { expectedRevision, channelId = null }) {
+    return sequelize.transaction(async (transaction) => {
+      const queryOptions = { transaction, retry: SINGLE_ATTEMPT };
+      const where = { scope, subject_id: subjectId };
+      const row = await AcquisitionPolicy.findOne({ where, ...queryOptions, lock: transaction.LOCK.UPDATE });
+      const currentRevision = row ? row.revision : 0;
+      if (expectedRevision !== undefined && expectedRevision !== currentRevision) {
+        throw new PolicyRevisionConflictError(currentRevision);
+      }
+      const values = { updated_at: new Date(), revision: currentRevision + 1 };
+      if (changes.delivery !== undefined) values.delivery_policy = changes.delivery;
+      if (changes.live !== undefined) values.live_policy = changes.live;
+      if (channelId) values.channel_id = channelId;
+      if (row) {
+        await row.update(values, queryOptions);
+        return toPolicy(row);
+      }
+      const created = await AcquisitionPolicy.create({ ...where, ...values }, queryOptions);
+      return toPolicy(created);
+    });
   }
 
   async getChannelPolicies(channelIds) {
