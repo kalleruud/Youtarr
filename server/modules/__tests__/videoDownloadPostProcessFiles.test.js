@@ -825,6 +825,17 @@ describe('videoDownloadPostProcessFiles', () => {
         expect(fs.remove).not.toHaveBeenCalledWith(`${tempVideoDir}/${uploadedSrt}`);
       });
 
+      it('warns and keeps a subtitle when timeline and provenance are unverified', async () => {
+        setupTempDownloadWithSubtitles({ subtitlesEnabled: false });
+        fs.existsSync.mockImplementation((file) => file === tempJsonPath || file === finalVideoPath || file === `${tempVideoDir}/${autoSrt}`);
+        await loadModule();
+        await settleAsync();
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ subtitlePath: `${tempVideoDir}/${autoSrt}`, reason: expect.stringContaining('provenance') }),
+          '[Post-Process] Caption normalization skipped'
+        );
+      });
+
       it('leaves every subtitle file alone when custom yt-dlp args choose the subtitle languages', async () => {
         setupTempDownloadWithSubtitles({ subtitlesEnabled: true, ytdlpCustomArgs: '--sub-langs en,en-orig' });
 

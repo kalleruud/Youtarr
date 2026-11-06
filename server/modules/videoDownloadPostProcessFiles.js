@@ -10,6 +10,8 @@ const tempPathManager = require('./download/tempPathManager');
 const downloadSettingsResolver = require('./download/downloadSettingsResolver');
 const YtdlpCommandBuilder = require('./download/ytdlpCommandBuilder');
 const { selectSubtitleFilesToPrune } = require('./download/subtitleSidecarPruner');
+const { publishCaption } = require('./download/captionPublication');
+const { resolveCaptionProvenance } = require('./download/captionProvenance');
 const { JobVideoDownload } = require('../models');
 const videoPersistence = require('./videoPersistence');
 const channelArtworkModule = require('./channelArtworkModule');
@@ -798,6 +800,25 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           await pruneSubtitleSidecars(videoDirectory, filesInDir, id, jsonData);
         } catch (err) {
           logger.warn({ err, videoDirectory }, '[Post-Process] Subtitle pruning failed; keeping every subtitle file');
+        }
+
+        // The effective yt-dlp timeline and selected track provenance are not
+        // currently passed to this process; keep the original until verified.
+        for (const file of filesInDir) {
+          if (!isFileForVideo(file, id) || !/\.srt$/i.test(file) || !fs.existsSync(path.join(videoDirectory, file))) continue;
+          const subtitlePath = path.join(videoDirectory, file);
+          const provenance = resolveCaptionProvenance({ fileName: file, youtubeId: id, info: jsonData });
+          if (provenance === 'human') continue;
+          const result = await publishCaption({
+            subtitlePath,
+            backupRoot: path.join(configModule.getJobsPath(), 'caption-originals'),
+            mediaRoot: configModule.directoryPath,
+            provenance,
+            timeline: 'unknown',
+          });
+          if (result.status === 'warning' || result.status === 'skipped') {
+            logger.warn({ subtitlePath, reason: result.reason, err: result.error }, '[Post-Process] Caption normalization skipped');
+          }
         }
 
         if (outgoingFlat) {
