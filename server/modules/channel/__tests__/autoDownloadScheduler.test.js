@@ -8,6 +8,14 @@ jest.mock('uuid');
 jest.mock('../../../logger');
 jest.mock('../../../models/channel', () => mockFactories.mockChannelModel());
 jest.mock('../../configModule', () => mockFactories.mockConfigModule());
+jest.mock('../../../models/video', () => ({ findAll: jest.fn().mockResolvedValue([]) }));
+jest.mock('../../../models/channelvideo', () => ({ findAll: jest.fn().mockResolvedValue([]) }));
+jest.mock('../../archiveModule', () => ({ filterArchivedVideoIds: jest.fn(() => new Set()) }));
+jest.mock('../../acquisition/acquisitionPolicyStore', () => ({
+  getGlobal: jest.fn().mockResolvedValue({ delivery: null, live: null }),
+  getChannelPolicies: jest.fn().mockResolvedValue(new Map()),
+  getVideoOverridesForChannels: jest.fn().mockResolvedValue([]),
+}));
 jest.mock('../../messageEmitter', () => ({ emitMessage: jest.fn() }));
 jest.mock('../../downloadModule', () => ({
   doChannelDownloads: jest.fn(),
@@ -182,7 +190,7 @@ describe('autoDownloadScheduler', () => {
 
       await expect(autoDownloadScheduler.generateChannelsFile()).rejects.toThrow('No valid channel URLs to download');
 
-      expect(logger.warn).toHaveBeenCalledWith('No URLs generated for channel downloads - all enabled channels have disabled tabs');
+      expect(logger.warn).toHaveBeenCalledWith('No URLs generated for channel downloads - enabled channels have no tabs set to download automatically');
     });
 
     test('should handle error and cleanup temp file', async () => {
@@ -219,6 +227,19 @@ describe('autoDownloadScheduler', () => {
       Channel.findAll.mockResolvedValue([]);
 
       await expect(autoDownloadScheduler.getEnabledChannelDownloadUrls()).resolves.toEqual([]);
+    });
+
+    it('leaves out tabs whose acquisition policy does not download', async () => {
+      const store = require('../../acquisition/acquisitionPolicyStore');
+      store.getChannelPolicies.mockResolvedValueOnce(new Map([['UC1', { delivery: 'stream', live: null }]]));
+      Channel.findAll.mockResolvedValue([
+        { channel_id: 'UC1', url: 'https://www.youtube.com/@one', auto_download_enabled_tabs: 'video,short' },
+        { channel_id: 'UC2', url: 'https://www.youtube.com/@two', auto_download_enabled_tabs: 'video' },
+      ]);
+
+      await expect(autoDownloadScheduler.getEnabledChannelDownloadUrls()).resolves.toEqual([
+        'https://www.youtube.com/channel/UC2/videos',
+      ]);
     });
 
     it('falls back to the stored url for channels without a channel_id', async () => {

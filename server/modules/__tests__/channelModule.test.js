@@ -21,6 +21,7 @@ jest.mock('../mediaServers/watchStatusQueries', () => ({ getWatchedByMap: jest.f
 jest.mock('../configModule', () => mockFactories.mockConfigModule());
 jest.mock('../youtubeApi', () => mockFactories.mockYoutubeApi());
 jest.mock('../../db', () => mockFactories.mockDb());
+jest.mock('../acquisition/channelSweepPlanner', () => ({ loadChannelSweepPlan: jest.fn() }));
 jest.mock('../filesystem', () => mockFactories.mockFilesystem());
 jest.mock('../fileCheckModule', () => mockFactories.mockFileCheckModule());
 jest.mock('../m3uGenerator', () => ({
@@ -89,8 +90,9 @@ describe('channelModule facade', () => {
       ['updateAutoDownloadForTab', '../channel/tabManager', 'updateAutoDownloadForTab', ['UC1', 'shorts', true], 'async'],
       ['redetectChannelTabs', '../channel/tabManager', 'redetectChannelTabs', ['UC1'], 'async'],
       ['resolveChannelFolderName', '../channel/channelMetadataFetcher', 'resolveChannelFolderName', [{ channel_id: 'UC1' }], 'async'],
-      ['generateChannelsFile', '../channel/autoDownloadScheduler', 'generateChannelsFile', [], 'async'],
+      ['generateChannelsFile', '../channel/autoDownloadScheduler', 'generateChannelsFile', [{ urls: ['https://www.youtube.com/channel/UC1/videos'] }], 'async'],
       ['getEnabledChannelDownloadUrls', '../channel/autoDownloadScheduler', 'getEnabledChannelDownloadUrls', [], 'async'],
+      ['getChannelSweepPlan', '../channel/autoDownloadScheduler', 'getChannelSweepPlan', [], 'async'],
       ['backfillChannelImages', '../channel/channelThumbnails', 'backfillChannelImages', [[{ channel_id: 'UC1' }]], 'async'],
     ];
 
