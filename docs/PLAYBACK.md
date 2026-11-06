@@ -47,7 +47,7 @@ after ten minutes without a reader; absolute lifetime is four hours. Disconnects
 cancel preparation, or release an active reader lease. Closure terminates the
 whole detached process group, escalates to SIGKILL after one second and removes
 its files after the grace period. Session capacity remains reserved during cleanup.
-Normal application exit kills outstanding process groups. A hard application/container crash can leave temporary files; the host's temporary
+Normal application exit kills outstanding process groups and removes owned session directories. A hard application/container crash can leave temporary files; the host's temporary
 storage cleanup is required for these orphan directories. No appdata is deleted.
 
 Logs record identity/session IDs and safe statuses using the existing durable

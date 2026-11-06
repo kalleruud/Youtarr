@@ -108,8 +108,12 @@ class PlaybackSession {
 
   stopProcesses() {
     for (const session of this.sessions.values()) {
-      if (!session.child?.pid) continue;
-      try { process.kill(-session.child.pid, 'SIGKILL'); } catch { /* Already exited. */ }
+      if (session.child?.pid) {
+        try { process.kill(-session.child.pid, 'SIGKILL'); } catch { /* Already exited. */ }
+      }
+      if (session.dir) {
+        try { fs.removeSync(session.dir); } catch { /* Host temporary cleanup remains the fallback. */ }
+      }
     }
   }
 

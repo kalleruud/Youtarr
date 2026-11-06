@@ -153,3 +153,15 @@ test('rejects an oversized completed cache without retaining it', async () => {
   await expect(playback.openPlayback(ID)).rejects.toMatchObject({ status: 503 });
   expect(await fs.pathExists(output)).toBe(false);
 });
+test('normal application exit cleanup removes only disposable media', async () => {
+  const cached = await playback.openPlayback(ID);
+  const lease = playback.getSessionAsset(cached.sessionId, 'media');
+  lease.release();
+  const local = path.join(fixture, 'local.mp4');
+  await fs.writeFile(local, 'local');
+  Video.findOne.mockResolvedValue({ filePath: local, removed: false });
+  await playback.openPlayback('bcdefghijkl');
+  playback.stopProcesses();
+  expect(await fs.pathExists(lease.filePath)).toBe(false);
+  expect(await fs.readFile(local, 'utf8')).toBe('local');
+});
