@@ -6,6 +6,9 @@ export interface FilenamePreviewData {
   folderLine: string;
   fileLineLength: number;
   folderLineLength: number;
+  /** Where the sample lands under the Jellyfin TV output profile (server naming, not the template). */
+  tvLine?: string;
+  tvLineLength?: number;
 }
 
 export interface UseFilenamePreviewResult {

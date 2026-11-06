@@ -5,6 +5,7 @@ Complete guide for integrating Youtarr with Jellyfin Media Server.
 ## Table of Contents
 - [Overview](#overview)
 - [Library Setup](#library-setup)
+- [Jellyfin TV (Shows) Output](#jellyfin-tv-shows-output)
 - [Metadata Configuration](#metadata-configuration)
 - [Native Playlist Sync](#native-playlist-sync)
 - [Channel Playlist Files (.m3u)](#channel-playlist-files-m3u)
@@ -38,7 +39,7 @@ Youtarr writes each video as a standalone "movie" with its own NFO metadata, so 
 
 - **`Movies` (current recommendation)**: the most reliable option. Every video displays as a movie with full metadata and artwork. Limitation: Jellyfin will NOT automatically import Youtarr's optional per-channel `.m3u` playlist files; Jellyfin only imports playlist files from libraries whose content type is Mixed or Music. See [Channel Playlist Files (.m3u)](#channel-playlist-files-m3u).
 - **`Mixed Movies and Shows`**: automatically imports the per-channel `.m3u` files as Jellyfin playlists, but comes with real risks. [Jellyfin's own documentation](https://jellyfin.org/docs/general/server/media/mixed-movies-and-shows/) says this library type "is broken and deprecated" and recommends against using it, and its TV-detection heuristics can misclassify channel content as TV series: video titles that look episode-like ("Season 3", "Episode 12") or folder names starting with digits can be picked up as episodes, and a single misdetected video folder can flip an entire channel folder into displaying as a series. This tends to work on smaller libraries and break as the library grows, since more titles means more chances for a false match.
-- **`Shows`**: not currently supported. Writing videos and metadata in a way that is compatible with Shows-type libraries is on our roadmap but is not supported yet.
+- **`Shows`**: supported for new downloads when Settings -> Core -> **Library Output Profile** is set to **Jellyfin TV**. See [Jellyfin TV (Shows) Output](#jellyfin-tv-shows-output). Existing downloads stay in the movie layout and are not moved by this setting.
 
 ### Step 2: Add Folders
 
@@ -72,6 +73,34 @@ In the library settings:
 **Image fetchers**:
 - Disable all internet fetchers
 - Local images will be used automatically
+
+## Jellyfin TV (Shows) Output
+
+With `libraryOutputProfile` set to `jellyfinTv` (Settings -> Core -> Library Output Profile -> Jellyfin TV), each new video download is published as a TV episode:
+
+```
+<downloads>/[__subfolder/]
+  Channel [UCxxxxxxxxxxxxxxxxxxxxxx]/        <- one show per YouTube channel (the ID keeps it stable across renames)
+    tvshow.nfo
+    poster.jpg                              <- channel artwork (when "Copy channel poster.jpg files" is on)
+    Season 2026/                            <- one season per publication year
+      season.nfo
+      Channel - S2026E001 - Title [videoId].mp4
+      Channel - S2026E001 - Title [videoId].nfo        <- <episodedetails>
+      Channel - S2026E001 - Title [videoId].en.srt     <- language-tagged subtitles
+      Channel - S2026E001 - Title [videoId]-thumb.jpg  <- episode thumbnail
+```
+
+- Season and episode numbers come from the stored episode assignment (see [docs/DATABASE.md](../DATABASE.md#tv-episode-identity)): they never change once given, so rescans, refreshes, restarts and re-downloads publish the same file again rather than a new episode. A re-downloaded or republished episode keeps its existing file name and its NFO's `dateadded`.
+- The episode NFO carries the title, show title, season, episode, aired date (the assignment's publication date), plot, runtime, genres/tags, rating and the YouTube video ID as `<uniqueid type="youtube">`. `tvshow.nfo` carries the channel title, description and channel ID.
+- Every file is written to a hidden `.youtarr-partial-*` file in the same folder and renamed into place; the media file is renamed last. An interrupted publication therefore never exposes a half-written file, and no episode appears until its NFO, captions and thumbnail are in place. A failed publication moves the video back to the temp folder and the download reports an error, as a failed move does.
+- MP3 downloads (MP3 only, and the MP3 of video + MP3) and videos without a known publication date keep the regular layout, so no season is invented. Videos whose date correction is under review publish with the stored assignment.
+- `POST /api/videos/{youtubeId}/tv-metadata/regenerate` rewrites `tvshow.nfo`, `season.nfo` and the episode NFO of an episode already in this layout from the cached `.info.json`; the media, subtitles and thumbnail are not touched and nothing is downloaded.
+- The "Generate video .nfo files" setting applies to the movie layout only; TV publication always writes its NFOs.
+
+Recommended library settings for the YouTube Shows library: Content Type **Shows**; enable the **Nfo** metadata reader; disable the **Nfo** metadata saver; disable every remote metadata downloader and image fetcher (no TheTVDB/TMDb matching for YouTube channels); mount the media folder read-only in the Jellyfin container. Jellyfin's real-time monitoring picks up new episodes; Youtarr does not yet send Jellyfin a targeted refresh after publishing.
+
+Not covered yet: moving existing downloads into this layout (with their watch state), and portrait show posters / landscape episode artwork selection. Empty `Season <year>` folders left after deleting a season's last episode are not cleaned up automatically.
 
 ## Metadata Configuration
 

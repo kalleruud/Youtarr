@@ -19,6 +19,7 @@ import {
   hasOversizedTitleTruncation,
 } from '../../../../utils/filenameTemplate/validate';
 import { useFilenamePreview } from '../../hooks/useFilenamePreview';
+import type { LibraryOutputProfile } from '../../../../config/configSchema';
 
 interface VideoFilenameTemplateProps {
   value: string;
@@ -28,6 +29,8 @@ interface VideoFilenameTemplateProps {
   onPreviewSuccess?: (prefix: string) => void;
   /** Whether the embedded MP4 title is still prefixed with the channel name. */
   channelPrefixEnabled?: boolean;
+  /** With 'jellyfinTv', video episodes are named by the TV publisher instead. */
+  outputProfile?: LibraryOutputProfile;
 }
 
 const SEVERITY_TEXT: Record<'warn' | 'danger', string> = {
@@ -44,6 +47,7 @@ export const VideoFilenameTemplate: React.FC<VideoFilenameTemplateProps> = ({
   saveRequirement,
   onPreviewSuccess,
   channelPrefixEnabled = false,
+  outputProfile = 'movie',
 }) => {
   const validation = useMemo(() => validatePrefix(value), [value]);
   const showTvSeriesPrefixTip = channelPrefixEnabled && value === PLEX_TV_SERIES_PRESET_PREFIX;
@@ -215,6 +219,28 @@ export const VideoFilenameTemplate: React.FC<VideoFilenameTemplateProps> = ({
           <Typography variant="caption" color="text.secondary" className="block mt-1">
             {preview.data.fileLineLength} characters
           </Typography>
+
+          {outputProfile === 'jellyfinTv' && preview.data.tvLine && (
+            <>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                className="mt-2 block font-semibold"
+              >
+                Jellyfin TV episode
+              </Typography>
+              <pre
+                data-testid="filename-preview-tv"
+                className="m-0 mt-1 px-2 py-1.5 rounded border border-border bg-background text-sm font-mono whitespace-pre-wrap break-all"
+              >
+                {preview.data.tvLine}
+              </pre>
+              <Typography variant="caption" color="text.secondary" className="block mt-1">
+                Video episodes use this fixed naming. The template above still names MP3 downloads and videos
+                without a known publication date.
+              </Typography>
+            </>
+          )}
         </Box>
       )}
 

@@ -51,6 +51,7 @@
   "customCookiesUploaded": false,
   "writeChannelPosters": true,
   "writeVideoNfoFiles": true,
+  "libraryOutputProfile": "movie",
   "writeVideoFanart": false,
   "writeBackdropImages": false,
   "prefixChannelNameInTitle": true,
