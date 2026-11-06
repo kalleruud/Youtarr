@@ -27,3 +27,16 @@ client/coverage/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Fork builds must not send runtime media/state or Git history to Docker.
+.git
+client/build/
+downloads/
+jobs/
+server/images/
+secrets/
+*.key
+*.pem
+
+# Exclude private environment files at every source-directory depth.
+**/.env*

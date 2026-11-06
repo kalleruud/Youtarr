@@ -1,5 +1,11 @@
 # Development Guide
 
+For Svetflix fork builds, image identity and app-only release/rollback, see [FORK_RELEASE.md](FORK_RELEASE.md).
+
+## Fork PR image validation
+
+Pull requests run a clean-checkout Docker image build, check the actual build context with synthetic private files, and start the image with an isolated disposable MariaDB. The smoke test requires both HTTP health and database schema health; its containers, temporary data and network are removed afterward. The aggregate CI check requires this job to pass. This does not publish an image or exercise the Svetflix stack, host paths, Jellyfin, or a production update and rollback. T3 has no Docker access, so Docker results come from CI; host release checks remain manual and require separate authorization.
+
 ## Using Development Builds
 
 Want to try features before they hit a stable release? Youtarr publishes a bleeding-edge `dev-latest` image that tracks the `dev` branch. Every merge to `dev` rebuilds it, so it's the fastest way to test unreleased work. It hasn't been through the stabilization pass that `latest` gets, so expect rough edges and occasional breakage. It's best used for testing and feedback, not as a daily driver.

@@ -8,18 +8,24 @@ RUN npm install -g npm@11.15.0 --ignore-scripts
 
 # ---- Dependencies ----
 FROM base AS dependencies
-COPY package*.json ./
+COPY package*.json .npmrc ./
 # Skip prepare script (husky) for production dependencies
 RUN npm ci --only=production --ignore-scripts
 
-# ---- Build ----
-FROM base AS build
-COPY package*.json ./
+# ---- Frontend build (no host Node/npm or client/build required) ----
+FROM base AS frontend
+WORKDIR /app/client
+COPY client/package*.json client/.npmrc ./
 RUN npm ci --ignore-scripts
-# Copy server code and built React app
+COPY client/ ./
+RUN npm run build
+
+# ---- Application sources ----
+FROM base AS build
+COPY package.json ./
 COPY server/ ./server/
-COPY client/build/ ./client/build/
 COPY migrations/ ./migrations/
+COPY --from=frontend /app/client/build ./client/build/
 
 # ---- Python deps for the runtime image ----
 # Keep this on the same Python minor as node:22-bookworm-slim's python3 (3.11);
@@ -36,8 +42,12 @@ RUN pip install --no-cache-dir --target=/opt/curl_cffi "curl-cffi>=0.10,<0.16"
 FROM node:22-bookworm-slim AS release
 WORKDIR /app
 
-# Lets tools like Renovate resolve the source repo (and CHANGELOG) for this image
-LABEL org.opencontainers.image.source="https://github.com/DialmasterOrg/Youtarr"
+# Metadata is optional: a caller-supplied revision alone does not prove a clean build.
+ARG SOURCE_REVISION=unknown
+ARG SOURCE_STATE=unknown
+LABEL org.opencontainers.image.source="https://github.com/kalleruud/Youtarr" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      org.opencontainers.image.version="${SOURCE_STATE}"
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
