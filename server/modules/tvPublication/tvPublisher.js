@@ -137,8 +137,11 @@ async function collectAssets(mediaPath, { thumbnailNames = ['.jpg'] } = {}) {
 async function removeStaleEpisodeFiles(plan) {
   const removed = [];
   for (const name of await readdirSafe(plan.seasonDir)) {
-    if (isStagingFile(name) || !isFileForVideo(name, plan.youtubeId) || name.startsWith(`${plan.stem}.`) ||
-        name === `${plan.stem}${THUMBNAIL_SUFFIX}`) continue;
+    if (isStagingFile(name) || !isFileForVideo(name, plan.youtubeId)) continue;
+    if (name.startsWith(`${plan.stem}.`)) {
+      if (!VIDEO_EXTENSIONS.includes(path.extname(name).toLowerCase()) || name === path.basename(plan.media.target)) continue;
+    }
+    if (name === `${plan.stem}${THUMBNAIL_SUFFIX}`) continue;
     const stalePath = path.join(plan.seasonDir, name);
     try {
       await fs.remove(stalePath);

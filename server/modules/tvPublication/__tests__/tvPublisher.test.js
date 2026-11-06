@@ -109,6 +109,24 @@ describe('tvPublisher', () => {
       .toEqual([[`Show - S2026E001 - Old [${ID}].mp4`], [`Show - S2026E001 - First [${ID}].mp4`, 'Show - S2026E002 - Other [otherVid01].mp4'].sort()]);
   });
 
+  test('a re-download in another container replaces the old media and keeps sidecars and show artwork', async () => {
+    const p = plan(await downloadFixture());
+    await fs.outputFile(path.join(p.seasonDir, `${p.stem}.mkv`), 'old');
+    await fs.outputFile(path.join(p.showDir, 'poster.jpg'), 'poster');
+    await fs.outputFile(path.join(p.showDir, 'backdrop.jpg'), 'backdrop');
+    await tvPublisher.publish(p);
+    expect(await listTree(p.showDir)).toEqual([
+      `Season 2026/${p.stem}-thumb.jpg`,
+      `Season 2026/${p.stem}.en.srt`,
+      `Season 2026/${p.stem}.mp4`,
+      `Season 2026/${p.stem}.nfo`,
+      'Season 2026/season.nfo',
+      'backdrop.jpg',
+      'poster.jpg',
+      'tvshow.nfo',
+    ]);
+  });
+
   test('findShowFolderName finds the show folder by channel ID only', async () => {
     await fs.ensureDir(path.join(library, `Renamed [${CHANNEL}]`));
     await fs.ensureDir(path.join(library, 'Other [UCother]'));
