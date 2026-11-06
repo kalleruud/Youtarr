@@ -63,3 +63,28 @@ rm -f "$rollback_override"
 ```
 
 Verify the running image ID equals the recorded previous ID, check app/database health and confirm the database container and volume identities are unchanged. The next normal build/update uses the persistent stack configuration again. Do not prune the rollback image until the release and recovery window have passed.
+
+## Release gates and evidence
+
+Owner approval is required before production change, restore or rollback. These checks are a design, not evidence of execution. A relevant gate that is unperformed, failed or unsupported by evidence blocks release. Record N/A only with a reason and owner agreement. Keep evidence containing private paths or user state secure; never record credentials or cookie values.
+
+For each candidate record the operator, approval, scope, CI run and exact commit, source state (clean export or unverified identifier), image ID and rollback tag. Record yt-dlp and FFmpeg versions, enabled features and settings without secrets, current and target schema revisions, migration order and compatibility/restore plan. Freeze extractor versions during comparisons and record changes separately. Link test outputs and fixture revisions, client versions, timestamps, results and defects. An unverified identifier is not a dirty-content digest.
+
+Before schema or media cutover, inventory database container/image/volume identities, app mounts and UID/GID. Capture a consistent matching database, configuration and Jellyfin user-state backup. Produce a secure file-move manifest with source, destination, identity and verification results. Rehearse restoring backups and reversing moves on disposable copies, verifying identities, counts, paths and user state. Record evidence and compatibility decisions before approval. Image rollback alone cannot reverse an incompatible migration; retain the matching backups and previous image through the recovery window.
+
+For an approved cutover, pause acquisition and cleanup, confirm one application writer and use the existing Jellyfin instance. Follow the app-only procedure above. Verify health, logs, database and volume identity, paths and applicable client gates before resuming acquisition and cleanup. Stop on failure and follow the approved recovery plan. Never delete volumes, use `compose down -v`, or recreate the database as a shortcut.
+
+### Regression and client matrix
+
+Each feature PR supplies deterministic synthetic or lawful fixtures and focused tests beside affected download, NFO, media-server or frontend code. Use controlled clock, network, process and filesystem boundaries where relevant; ordinary tests must not require production data. Record commands, fixture revisions and results. Future feature tests are prerequisites, not passes asserted here.
+
+| Release | Automated/disposable regression evidence | Manual gates on both Jellyfin Web and owner's JellySee (record exact versions) |
+| --- | --- | --- |
+| Captions | Both observed rolling-caption cases (237/475 and 238/477 cues at most 20 ms), timing, legitimate repeated speech and repair interruption/retry; synthetic fixtures reproduce the relevant patterns. | Readability, synchronization and selection during playback; record sample and result separately for each client. |
+| TV | Stable episode mapping across backfill, rename and rescan; publication manifest and interrupted publication/retry; no duplicate identities. Rehearse migration and reversal on disposable existing-media copies, including watch/resume and playlists. | Show/season/episode navigation, portrait and landscape artwork, watch/resume and migrated media on each client. |
+| Streaming | Source-state transitions, duplicate delivery, stale leases, expired upstream URLs and process/cache limits with deterministic adapters. | Start, seek, resume and captions on each client; promote to local media and verify continuity. |
+| Live | Reconnect gaps, interrupted capture, low storage, duplicate delivery and replay reconciliation; partial capture and gap reporting match injected failures. | Live playback and recording, honest partial/gap status and replay continuity on each client. |
+
+For each applicable row record separate automated, Jellyfin Web and JellySee outcomes as **not run**, pass or fail, with evidence and issue links. A pass requires observed behavior. Feature gates remain **not run** until executed; client playback, restore and rollback have not been rehearsed as part of this document. The owner-confirmed local build is not evidence for these gates.
+
+For recovery, record the disposable rehearsal environment, prior and candidate image IDs, schema versions, backup identifiers, restore and reverse-move results, and database service/volume identity before and after. Verify app health and representative media and user state after recovery. Production rollback or restore still requires separate owner approval.
