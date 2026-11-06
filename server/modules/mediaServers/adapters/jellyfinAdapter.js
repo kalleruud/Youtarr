@@ -85,6 +85,46 @@ class JellyfinAdapter extends BaseAdapter {
     }
   }
 
+  // The library item for a channel folder, matched by folder name because
+  // Jellyfin's mount path rarely equals Youtarr's. Shows are few, so they
+  // are listed whole; a folder item (mixed/home-video libraries) is looked
+  // up by name. Resolves null when Jellyfin has not scanned the folder yet.
+  async resolveFolderItemId(folderPath) {
+    const target = extractBasename(String(folderPath).replace(/[\\/]+$/, ''));
+    const lookups = [
+      { includeItemTypes: 'Series' },
+      { includeItemTypes: 'Folder', searchTerm: target },
+    ];
+    for (const lookup of lookups) {
+      const params = { userId: this.userId, recursive: true, fields: 'Path', ...lookup };
+      const res = await axios.get(`${this.url}/Items`, { headers: this._headers(), params, timeout: REQUEST_TIMEOUT_MS });
+      const match = (res.data?.Items || []).find((i) => i.Path && extractBasename(i.Path.replace(/[\\/]+$/, '')) === target);
+      if (match) return match.Id;
+    }
+    return null;
+  }
+
+  // Ask Jellyfin to re-read one show's local images (poster.jpg) instead of
+  // scanning the library. Resolves { status, message }; never rejects.
+  async refreshFolderImages(folderPath) {
+    try {
+      const itemId = await this.resolveFolderItemId(folderPath);
+      if (!itemId) {
+        return { status: 'not-found', message: 'Jellyfin has not scanned this channel folder yet; retry after its next library scan.' };
+      }
+      await axios.post(`${this.url}/Items/${encodeURIComponent(itemId)}/Refresh`, null, {
+        headers: this._headers(),
+        params: { metadataRefreshMode: 'Default', imageRefreshMode: 'FullRefresh', replaceAllImages: true, replaceAllMetadata: false },
+        timeout: REQUEST_TIMEOUT_MS,
+      });
+      return { status: 'refreshed', message: 'Jellyfin is re-reading the poster. Apps may show the previous image until their image cache expires.' };
+    } catch (err) {
+      const details = describeHttpError(err);
+      logger.warn({ ...details, folderPath }, 'jellyfin: artwork refresh request failed');
+      return { status: 'failed', message: `Jellyfin artwork refresh failed: ${details.message || err.message}` };
+    }
+  }
+
   // Watch state per target user: every server user when
   // jellyfinWatchStatusAllUsers is on (the default), else just the configured
   // one. Only watched and in-progress items are listed; a whole-server listing

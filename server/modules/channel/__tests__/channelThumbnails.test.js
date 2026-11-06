@@ -8,6 +8,10 @@ jest.mock('child_process');
 jest.mock('../../../logger');
 jest.mock('../../configModule', () => mockFactories.mockConfigModule());
 jest.mock('../../filesystem', () => mockFactories.mockFilesystem());
+jest.mock('../../channelArtworkModule', () => ({
+  isEnabled: jest.fn((config) => config.tvShowArtwork === true),
+  syncChannel: jest.fn().mockResolvedValue({ published: true, note: null }),
+}));
 
 describe('channelThumbnails', () => {
   let channelThumbnails;
@@ -32,7 +36,8 @@ describe('channelThumbnails', () => {
       readFile: jest.fn(),
       writeFile: jest.fn(),
       unlink: jest.fn(),
-      rename: jest.fn()
+      rename: jest.fn(),
+      copyFile: jest.fn().mockResolvedValue(),
     };
 
     logger = require('../../../logger');
@@ -86,6 +91,23 @@ describe('channelThumbnails', () => {
         expect.objectContaining({ channelId: 'UC123' }),
         'Error resizing channel thumbnail'
       );
+    });
+
+    test('keeps the full-size avatar for show poster composition before resizing', async () => {
+      await channelThumbnails.resizeChannelThumbnail('UC123');
+
+      expect(fs.promises.copyFile).toHaveBeenCalledWith(
+        '/path/to/images/channelthumb-UC123.jpg',
+        '/path/to/images/channelavatar-UC123.jpg'
+      );
+    });
+
+    test('still resizes when the full-size avatar cannot be kept', async () => {
+      fs.promises.copyFile.mockRejectedValue(new Error('EACCES'));
+
+      await channelThumbnails.resizeChannelThumbnail('UC123');
+
+      expect(fs.promises.rename).toHaveBeenCalled();
     });
 
     test('keeps the original thumbnail when ffmpeg fails', async () => {
@@ -474,6 +496,34 @@ describe('channelThumbnails', () => {
       mockRequest.on.mock.calls.find(c => c[0] === 'error')[1](new Error('socket hang up'));
 
       expect(fsExtra.unlinkSync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('backfillChannelImages with portrait show artwork', () => {
+    const channel = { channel_id: 'UC123', folder_name: 'Pawel', sub_folder: null };
+
+    test('publishes the portrait show poster instead of copying the square avatar', async () => {
+      const configModule = require('../../configModule');
+      const channelArtworkModule = require('../../channelArtworkModule');
+      const filesystem = require('../../filesystem');
+      configModule.getConfig.mockReturnValue({ writeChannelPosters: true, tvShowArtwork: true });
+      fs.existsSync.mockReturnValue(true);
+
+      await channelThumbnails.backfillChannelImages([channel]);
+
+      expect({ synced: channelArtworkModule.syncChannel.mock.calls, copies: filesystem.copySyncWithFallback.mock.calls.length })
+        .toEqual({ synced: [['UC123', { folderPath: '/path/to/videos/Pawel' }]], copies: 0 });
+    });
+
+    test('keeps copying the square avatar when portrait artwork is off', async () => {
+      const configModule = require('../../configModule');
+      const channelArtworkModule = require('../../channelArtworkModule');
+      configModule.getConfig.mockReturnValue({ writeChannelPosters: true });
+      fs.existsSync.mockImplementation((p) => !p.endsWith('poster.jpg'));
+
+      await channelThumbnails.backfillChannelImages([channel]);
+
+      expect(channelArtworkModule.syncChannel).not.toHaveBeenCalled();
     });
   });
 });
