@@ -1,4 +1,5 @@
 const path = require('path');
+const crypto = require('crypto');
 const configModule = require('../configModule');
 const tempPathManager = require('./tempPathManager');
 const logger = require('../../logger');
@@ -173,6 +174,7 @@ class YtdlpCommandBuilder {
 
       if (config.sponsorblockAction === 'remove') {
         args.push('--sponsorblock-remove', categoriesStr);
+        if (config.sponsorblockAccurateCuts === true) args.push('--force-keyframes-at-cuts');
       } else if (config.sponsorblockAction === 'mark') {
         args.push('--sponsorblock-mark', categoriesStr);
       }
@@ -462,6 +464,28 @@ class YtdlpCommandBuilder {
       .join(',');
   }
 
+  // The snapshot is emitted by yt-dlp at after_move, before its Exec PP.
+  // Do not infer the final timeline from the pre-postprocessing .info.json.
+  static buildCaptionFinalizationArgs(config, outputPath) {
+    // yt-dlp's chapter cutter can leave captions from removed segments in the
+    // resulting SRT. Its after_move state alone cannot establish correct timing.
+    const sponsorArgs = this.buildSponsorblockArgs(config);
+    const removeIndex = sponsorArgs.indexOf('--sponsorblock-remove');
+    const categories = removeIndex < 0 ? '' : Buffer.from(sponsorArgs[removeIndex + 1]).toString('hex');
+    const trusted = this.buildCustomArgs(config).length === 0;
+    // Without --force-keyframes-at-cuts the cuts land on keyframes rather than
+    // the SponsorBlock ranges, so the final caption timeline cannot be mapped.
+    let contract = 'unknown-caption-timeline';
+    if (trusted && !categories) contract = 'managed-caption-v1';
+    else if (trusted && config.sponsorblockAccurateCuts === true) contract = `managed-caption-cuts-${categories}`;
+    else if (trusted) contract = 'inexact-caption-cuts';
+    const nonce = crypto.randomBytes(16).toString('hex');
+    return [
+      '--print-to-file', 'after_move:%(.{id,filepath,requested_subtitles,__real_download,sponsorblock_chapters,duration})j', `${outputPath}.caption-state-${nonce}.json`,
+      '--exec', `after_move:node ${path.resolve(__dirname, '../videoDownloadPostProcessFiles.js')} {} ${contract} ${nonce}`,
+    ];
+  }
+
   // Build subtitle args based on configuration
   static buildSubtitleArgs(config) {
     const args = [];
@@ -659,7 +683,7 @@ class YtdlpCommandBuilder {
       '--datebefore', 'now',
       '-o', `thumbnail:${thumbnailPath}`,
       '-o', 'pl_thumbnail:',
-      '--exec', `node ${path.resolve(__dirname, '../videoDownloadPostProcessFiles.js')} {}`
+      ...this.buildCaptionFinalizationArgs(config, outputPath)
     );
 
     // Add Sponsorblock args if configured
@@ -749,7 +773,7 @@ class YtdlpCommandBuilder {
       '--datebefore', 'now',
       '-o', `thumbnail:${thumbnailPath}`,
       '-o', 'pl_thumbnail:',
-      '--exec', `node ${path.resolve(__dirname, '../videoDownloadPostProcessFiles.js')} {}`
+      ...this.buildCaptionFinalizationArgs(config, outputPath)
     );
 
     // Add Sponsorblock args if configured
