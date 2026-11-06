@@ -26,7 +26,7 @@ beforeAll(async () => {
   await db.query("INSERT INTO channels VALUES (1,'UC1','old'),(2,'UC1','new')");
   await db.query("INSERT INTO videos VALUES (1,'a')");
   await db.query('INSERT INTO jobvideos VALUES (1,1)');
-  await db.query("INSERT INTO channelvideos VALUES (1,'b','UC1','2021-01-01','exact'),(2,'a','UC1','2021-01-01','exact'),(3,'a','UC1','2021-01-01','exact')");
+  await db.query("INSERT INTO channelvideos VALUES (1,'b','UC1','2021-01-01','exact'),(2,'a','UC1','2021-01-01','exact'),(3,'a','UC1','2021-01-01','exact'),(4,'other-case','uc1','2020-01-01','exact')");
   await migration.up(q, Sequelize);
   await migration.up(q, Sequelize);
   allocator = require('../../server/modules/episodeAssignment');
@@ -44,6 +44,8 @@ test('additive migration preserves legacy data and concurrent allocations serial
   const get = youtubeId => allocator.ensureEpisodeAssignment({ channelId: 'UC1', youtubeId });
   const results = await Promise.all([get('a'), get('b'), get('a'), get('b')]);
   expect(results.map(x => x.episode)).toEqual([1, 2, 1, 2]);
+  const [otherCase] = await db.query("SELECT * FROM episode_assignments WHERE youtube_id='other-case'");
+  expect(otherCase).toHaveLength(0);
   const [rows] = await db.query('SELECT * FROM videos');
   const [history] = await db.query('SELECT * FROM jobvideos');
   expect(rows).toHaveLength(1);

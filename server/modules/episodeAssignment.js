@@ -22,10 +22,11 @@ function dateOf(value, source) {
 class EpisodeAssignments {
   async getStatus(youtubeId) {
     const rows = await ChannelVideo.findAll({ where: { youtube_id: youtubeId }, attributes: ['youtube_id', 'channel_id', 'publishedAt', 'published_at_source'] });
+    const existing = await EpisodeAssignment.findByPk(youtubeId);
     const catalog = rows.filter(row => row.youtube_id === youtubeId)
+      .filter(row => !existing || row.channel_id === existing.channel_id)
       .filter(row => dateOf(row.publishedAt, row.published_at_source))
       .sort((a, b) => sourceRank(b.published_at_source) - sourceRank(a.published_at_source) || dateOf(a.publishedAt, a.published_at_source).localeCompare(dateOf(b.publishedAt, b.published_at_source)));
-    const existing = await EpisodeAssignment.findByPk(youtubeId);
     const observation = catalog[0];
     if (existing) return this.result(existing, observation?.publishedAt, observation?.published_at_source);
     return { status: observation ? 'not-assigned' : 'date-required' };
@@ -51,9 +52,10 @@ class EpisodeAssignments {
     return sequelize.transaction({ isolationLevel: Transaction.ISOLATION_LEVELS.READ_COMMITTED }, async transaction => {
       await EpisodeShow.findOrCreate({ where: { channel_id: channelId }, transaction, retry: NO_QUERY_RETRY });
       await EpisodeShow.findByPk(channelId, { transaction, lock: transaction.LOCK.UPDATE, retry: NO_QUERY_RETRY });
-      const catalog = await ChannelVideo.findAll({ where: { channel_id: channelId }, attributes: ['youtube_id', 'publishedAt', 'published_at_source'], transaction, retry: NO_QUERY_RETRY });
+      const catalog = await ChannelVideo.findAll({ where: { channel_id: channelId }, attributes: ['channel_id', 'youtube_id', 'publishedAt', 'published_at_source'], transaction, retry: NO_QUERY_RETRY });
       const candidates = new Map();
       for (const row of catalog) {
+        if (row.channel_id !== channelId) continue;
         const date = dateOf(row.publishedAt, row.published_at_source);
         const previous = candidates.get(row.youtube_id);
         if (date && (!previous || sourceRank(row.published_at_source) > sourceRank(previous.source) ||

@@ -20,7 +20,7 @@ jest.mock('../../models/episodeAssignment', () => ({
 const assignments = require('../episodeAssignment');
 
 beforeEach(() => { mockRows.clear(); mockCatalog = []; mockQueue = Promise.resolve(); });
-const entry = (youtube_id, publishedAt, published_at_source = 'exact') => ({ youtube_id, publishedAt, published_at_source });
+const entry = (youtube_id, publishedAt, published_at_source = 'exact') => ({ channel_id: 'UC1', youtube_id, publishedAt, published_at_source });
 const get = (youtubeId, publishedAt, source) => assignments.ensureEpisodeAssignment({ channelId: 'UC1', youtubeId, publishedAt, source });
 
 test('first export sorts the known mockCatalog by date and id and later backfill does not renumber', async () => {
@@ -66,6 +66,12 @@ test('retries a deadlocked allocation and returns the persisted identity', async
 
 test('invalid dates cannot create a season', async () => {
   expect((await get('a', '2021-02-30', 'exact')).status).toBe('date-required');
+});
+
+test('case-insensitive legacy catalog lookup cannot mix distinct channel identities', async () => {
+  mockCatalog = [{ ...entry('other', '2021-01-01'), channel_id: 'uc1' }, entry('a', '2021-01-01')];
+  expect((await get('a')).episode).toBe(1);
+  expect(mockRows.has('other')).toBe(false);
 });
 
 test('status exposes missing dates and corrected dates without allocating', async () => {
