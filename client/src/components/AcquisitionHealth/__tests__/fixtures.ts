@@ -1,0 +1,50 @@
+import { HealthOutcome, HealthSummary } from '../types';
+
+export const outcome = (overrides: Partial<HealthOutcome> = {}): HealthOutcome => ({
+  youtubeId: 'abcdefghijk',
+  stage: 'library',
+  status: 'pending',
+  category: 'scan-pending',
+  categoryLabel: 'Library scan pending',
+  reasonCode: 'show-not-found',
+  message: 'Jellyfin has not scanned this show folder yet.',
+  retryable: true,
+  attempts: 1,
+  revision: 3,
+  jobId: 'job-1',
+  appVersion: '1.90.2',
+  toolVersion: '2026.10.01',
+  policyRevision: null,
+  details: null,
+  createdAt: '2026-11-06T10:00:00Z',
+  updatedAt: '2026-11-06T10:05:00Z',
+  ...overrides,
+});
+
+export const summary = (overrides: Partial<HealthSummary> = {}): HealthSummary => ({
+  generatedAt: '2026-11-06T12:00:00Z',
+  storage: {
+    paused: false,
+    pausedSince: null,
+    reasons: [],
+    usage: { limit: null, limitBytes: null, downloadedBytes: 1024 },
+    freeSpace: { limit: '10GB', limitBytes: 1, availableBytes: 2048 },
+    tempFreeSpace: { limit: null, limitBytes: null, availableBytes: null },
+    checkedAt: null,
+  },
+  problems: [{ stage: 'library', status: 'pending', category: 'scan-pending', categoryLabel: 'Library scan pending', count: 1 }],
+  recent: [outcome()],
+  unresolvedTotal: 1,
+  channels: {
+    enabledCount: 3,
+    staleCount: 1,
+    thresholdDays: 7,
+    channels: [{ channelId: 'UC1', title: 'Old Channel', lastCheckedAt: null }],
+    autoDownloadEnabled: true,
+    lastAutoDownloadRun: null,
+  },
+  leases: { activeVideos: 0, inProgressDownloads: 0 },
+  live: { tracked: false, message: 'Live detection delay and capture gaps are reported once live recording is available.' },
+  versions: { appVersion: '1.90.2', toolVersion: '2026.10.01' },
+  ...overrides,
+});

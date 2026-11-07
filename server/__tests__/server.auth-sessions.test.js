@@ -216,7 +216,8 @@ const createServerModule = ({
           getRunningJobs: jest.fn(() => []),
           getRunningJobsWithFreshVideos: jest.fn().mockResolvedValue([]),
           onJobAbandoned: jest.fn(),
-          onJobEnded: jest.fn()
+          onJobEnded: jest.fn(),
+          onRestartAbandoned: jest.fn()
         }));
         jest.doMock('../modules/videosModule', () => ({}));
         jest.doMock('../modules/videoMetadataModule', () => ({
@@ -326,6 +327,8 @@ const createServerModule = ({
         jest.doMock('../modules/acquisition/acquisitionPolicyService', () => ({ AcquisitionPolicyError: class extends Error {} }));
 
         jest.doMock('../modules/tvPublication', () => ({ isEnabled: jest.fn(() => false), regenerateMetadata: jest.fn() }));
+        jest.doMock('../modules/health', () => ({ enableNotifications: jest.fn(), recordAbandoned: jest.fn(), HealthError: class extends Error {} }));
+        jest.doMock('../modules/health/runtimeVersions', () => ({ setToolVersionProvider: jest.fn(), getVersions: jest.fn(() => ({})) }));
         jest.doMock('../modules/channelArtworkModule', () => ({ isEnabled: jest.fn(() => false), syncChannel: jest.fn(), ArtworkValidationError: class extends Error {} }));
         const serverModule = require('../server');
 

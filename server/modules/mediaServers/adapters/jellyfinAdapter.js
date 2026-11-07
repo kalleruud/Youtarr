@@ -125,6 +125,44 @@ class JellyfinAdapter extends BaseAdapter {
     }
   }
 
+  // Targeted publication check for one TV show folder (issue #18): finds the
+  // show's Series item, lists the file names of its episodes, and on request
+  // asks Jellyfin to refresh just that show (recursive, so new season folders
+  // and episode files are picked up). Never a whole-library scan.
+  // Resolves { status: 'show-not-found' } | { status: 'listed', seriesId,
+  // files: Set<basename>, refreshed } ; rejects with an error carrying
+  // `retryable` for HTTP and network failures.
+  async checkShowPublication(showDir, { refresh = false } = {}) {
+    try {
+      const seriesId = await this.resolveFolderItemId(showDir);
+      if (!seriesId) return { status: 'show-not-found' };
+      const res = await axios.get(`${this.url}/Items`, {
+        headers: this._headers(),
+        params: { userId: this.userId, parentId: seriesId, recursive: true, includeItemTypes: 'Episode,Video', fields: 'Path' },
+        timeout: REQUEST_TIMEOUT_MS,
+      });
+      const files = new Set((res.data?.Items || []).filter((i) => i.Path).map((i) => extractBasename(i.Path)));
+      if (refresh) {
+        await axios.post(`${this.url}/Items/${encodeURIComponent(seriesId)}/Refresh`, null, {
+          headers: this._headers(),
+          params: { Recursive: true, metadataRefreshMode: 'Default', imageRefreshMode: 'Default', replaceAllMetadata: false, replaceAllImages: false },
+          timeout: REQUEST_TIMEOUT_MS,
+        });
+      }
+      return { status: 'listed', seriesId, files, refreshed: Boolean(refresh) };
+    } catch (err) {
+      const details = describeHttpError(err);
+      const status = err.response?.status;
+      const failure = new Error(status === 401 || status === 403
+        ? 'Jellyfin rejected the API key; check it in Settings > Media Servers.'
+        : `Jellyfin request failed: ${details.message || err.message}`);
+      failure.retryable = !(status === 401 || status === 403 || status === 404);
+      failure.httpStatus = status || null;
+      logger.warn({ ...details, showDir }, 'jellyfin: show publication check failed');
+      throw failure;
+    }
+  }
+
   // Watch state per target user: every server user when
   // jellyfinWatchStatusAllUsers is on (the default), else just the configured
   // one. Only watched and in-progress items are listed; a whole-server listing

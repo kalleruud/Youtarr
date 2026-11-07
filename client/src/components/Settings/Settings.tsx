@@ -46,6 +46,7 @@ import { FILENAME_PRESETS } from '../../utils/filenameTemplate/presets';
 import { validatePrefix } from '../../utils/filenameTemplate/validate';
 import { SETTINGS_PAGES, SettingsIndex } from './SettingsIndex';
 import { MaintenanceSection } from './MaintenanceSection';
+import { AcquisitionHealthSection } from '../AcquisitionHealth';
 import { SchedulingSection } from '../Configuration/sections/SchedulingSection';
 import { LoggingSection } from '../Configuration/sections/LoggingSection';
 
@@ -506,6 +507,10 @@ export function Settings({ token }: SettingsProps) {
           <Route
             path="maintenance"
             element={<MaintenanceSection token={token} config={config} />}
+          />
+          <Route
+            path="acquisition-health"
+            element={<AcquisitionHealthSection token={token} />}
           />
           <Route
             path="logging"

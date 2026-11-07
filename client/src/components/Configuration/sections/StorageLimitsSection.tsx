@@ -76,10 +76,14 @@ export const StorageLimitsSection: React.FC<StorageLimitsSectionProps> = ({
   onMobileTooltipClick,
 }) => {
   const minFreeSpaceLabelId = useId();
+  const minTempFreeSpaceLabelId = useId();
   const { data: pauseStatus } = useDownloadPauseStatus(token);
   // Only values the server can enforce count; a malformed one is ignored there.
   const isActiveLimit = (value: string) => (storageSizeToBytes(value) ?? 0) > 0;
-  const hasLimit = isActiveLimit(config.downloadPauseUsageLimit) || isActiveLimit(config.downloadPauseMinFreeSpace);
+  const hasLimit = isActiveLimit(config.downloadPauseUsageLimit)
+    || isActiveLimit(config.downloadPauseMinFreeSpace)
+    || isActiveLimit(config.downloadPauseMinTempFreeSpace);
+  const tempAvailableBytes = pauseStatus?.tempFreeSpace?.availableBytes ?? null;
   const conflicts = getPauseRemovalConflicts(config);
   const downloadedBytes = pauseStatus?.usage.downloadedBytes ?? null;
 
@@ -93,8 +97,8 @@ export const StorageLimitsSection: React.FC<StorageLimitsSectionProps> = ({
         Stop starting new downloads (scheduled, manual, and API) when storage reaches a limit. New
         download requests are refused, and queued downloads wait and then start automatically once
         storage is back within your limits. A download job already running finishes first, so storage
-        can go past a limit until it ends. Both limits are optional; downloads pause when either one is
-        reached.
+        can go past a limit until it ends. Every limit is optional; downloads pause when any one is
+        reached, and the pause message says what to free up to resume.
       </Typography>
 
       {pauseStatus?.paused ? (
@@ -199,6 +203,50 @@ export const StorageLimitsSection: React.FC<StorageLimitsSectionProps> = ({
                 </Grid>
               </Grid>
             )}
+          </Box>
+        </Grid>
+
+        <OrDivider />
+
+        <Grid item xs={12}>
+          <Box className="rounded-lg border border-border p-4">
+            <Typography variant="subtitle2" className="mb-3">
+              Temporary download folder
+            </Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}>
+                <Box className="flex items-center">
+                  <FormControl fullWidth>
+                    <InputLabel id={minTempFreeSpaceLabelId}>Pause when temp free space falls below</InputLabel>
+                    <Select
+                      labelId={minTempFreeSpaceLabelId}
+                      label="Pause when temp free space falls below"
+                      value={config.downloadPauseMinTempFreeSpace || ''}
+                      onChange={(e) => onConfigChange({ downloadPauseMinTempFreeSpace: e.target.value })}
+                      inputProps={{ 'data-testid': 'download-pause-min-temp-free-space-select' }}
+                    >
+                      <MenuItem value="">
+                        <em>Off</em>
+                      </MenuItem>
+                      {MIN_FREE_SPACE_OPTIONS.map((option) => (
+                        <MenuItem key={option.value} value={option.value}>
+                          {option.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    <FormHelperText>
+                      {tempAvailableBytes !== null
+                        ? `${formatBytes(tempAvailableBytes)} free where downloads are staged`
+                        : 'Measured where downloads are staged before they move into the library'}
+                    </FormHelperText>
+                  </FormControl>
+                  <InfoTooltip
+                    text="Downloads are written to a temporary folder first (inside the downloads folder, or the external temp directory when that setting is on), and merging video and audio needs roughly twice a video's size there. When this folder is on a small disk, set a minimum so downloads pause before a merge runs out of space. If free space cannot be measured, this limit is not enforced."
+                    onMobileClick={onMobileTooltipClick}
+                  />
+                </Box>
+              </Grid>
+            </Grid>
           </Box>
         </Grid>
 

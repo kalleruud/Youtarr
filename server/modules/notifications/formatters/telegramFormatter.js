@@ -215,9 +215,28 @@ function formatDownloadPauseMessage(status) {
   return { title, body };
 }
 
+/**
+ * Format an acquisition-health alert as Telegram HTML
+ * @param {Object} content - { title, summary, lines, footer } from healthNotifier
+ * @returns {Object} Object with title and HTML body strings
+ */
+function formatHealthAlertMessage(content) {
+  const { title, summary, lines = [], footer } = content;
+  let body = escapeHtml(summary);
+  if (lines.length > 0) {
+    body += `\n\n${lines.map((line) => `• ${escapeHtml(line)}`).join('\n')}`;
+  }
+  if (footer) {
+    body += `\n\n<i>${escapeHtml(footer)}</i>`;
+  }
+  body += '\n\n<i>— Youtarr</i>';
+  return { title, body };
+}
+
 module.exports = {
   formatDownloadMessage,
   formatTestMessage,
   formatAutoRemovalMessage,
-  formatDownloadPauseMessage
+  formatDownloadPauseMessage,
+  formatHealthAlertMessage
 };

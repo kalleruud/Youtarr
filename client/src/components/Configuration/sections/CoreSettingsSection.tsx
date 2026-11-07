@@ -424,6 +424,31 @@ export const CoreSettingsSection: React.FC<CoreSettingsSectionProps> = ({
                   />
                 </Grid>
 
+                {config.libraryOutputProfile === 'jellyfinTv' && (
+                  <Grid item xs={12} md={6} className="mt-3">
+                    <FormControl>
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            name="jellyfinPublishRefresh"
+                            checked={config.jellyfinPublishRefresh}
+                            onChange={handleCheckboxChange}
+                          />
+                        }
+                        label={
+                          <Box className="flex items-center">
+                            Confirm new episodes in Jellyfin
+                            <InfoTooltip
+                              text="After each download, check that Jellyfin lists the new episode and, if not, refresh only that show (never a whole-library scan), re-checking a few times. Needs a Jellyfin server under Settings > Jellyfin. The result shows in Settings > Acquisition Health and never marks a download failed."
+                              onMobileClick={onMobileTooltipClick}
+                            />
+                          </Box>
+                        }
+                      />
+                    </FormControl>
+                  </Grid>
+                )}
+
                 <Grid item xs={12} md={6} className="mt-3">
                   <FormControl>
                     <FormControlLabel

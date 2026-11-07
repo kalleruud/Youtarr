@@ -241,6 +241,50 @@ class NotificationModule {
   }
 
   /**
+   * Send an acquisition-health alert (issue #18). Rate limiting, batching
+   * and redaction happen in health/healthNotifier before this is called.
+   * @param {Object} content - { title, summary, lines, footer }
+   * @returns {Promise<number>} Number of services that accepted it
+   */
+  async sendHealthAlert(content) {
+    if (!this.isConfigured()) {
+      logger.debug('Notifications not configured, skipping health alert');
+      return 0;
+    }
+
+    try {
+      const config = this.configModule.getConfig();
+      const urls = this.getUrlsFromConfig(config);
+
+      const results = await Promise.all(urls.map(async (entry) => {
+        try {
+          const service = getServiceForUrl(entry.url);
+          const useRichFormatting = entry.richFormatting && service.supportsRichFormatting;
+
+          const formatter = useRichFormatting ? getFormatter(service) : plainFormatter;
+          const sendMethod = useRichFormatting ? service.sendMethod : 'apprise-plain';
+
+          const message = formatter.formatHealthAlertMessage(content);
+          await sendNotification(entry.url, message, sendMethod);
+          return true;
+        } catch (err) {
+          logger.error({ err, name: entry.name }, 'Failed to send health alert');
+          return false;
+        }
+      }));
+
+      const successCount = results.filter(Boolean).length;
+      if (successCount > 0) {
+        logger.info({ successCount, totalCount: urls.length }, 'Health alert sent successfully');
+      }
+      return successCount;
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to send health alert');
+      return 0;
+    }
+  }
+
+  /**
    * Send a test notification to all configured webhooks
    */
   async sendTestNotification() {

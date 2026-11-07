@@ -9,7 +9,7 @@ const { SCHEDULES, normalizeToMinimumInterval, violatesMinimumInterval } = requi
 const { normalizeLevelSetting } = require('../logging/logLevel');
 
 // Storage limit settings: a positive whole number with a unit, or '' for off.
-const STORAGE_SIZE_KEYS = ['downloadPauseUsageLimit', 'downloadPauseMinFreeSpace', 'autoRemovalUsageLimit'];
+const STORAGE_SIZE_KEYS = ['downloadPauseUsageLimit', 'downloadPauseMinFreeSpace', 'downloadPauseMinTempFreeSpace', 'autoRemovalUsageLimit'];
 const STORAGE_SIZE_PATTERN = /^[1-9]\d*(MB|GB|TB)$/;
 
 // yt-dlp's cache (YouTube signature-function specs) lives under the config

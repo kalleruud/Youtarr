@@ -510,4 +510,42 @@ describe('JellyfinAdapter', () => {
       expect(result).toEqual({ status: 'failed', message: expect.stringContaining('status code 500') });
     });
   });
+
+  describe('checkShowPublication', () => {
+    const seriesListing = { data: { Items: [{ Id: 'show-1', Path: '/media/youtube/Pawel [UC1]' }] } };
+
+    test('lists the episode file names of the matching show only', async () => {
+      axios.get.mockResolvedValueOnce(seriesListing)
+        .mockResolvedValueOnce({ data: { Items: [{ Path: '/media/youtube/Pawel [UC1]/Season 2026/ep1 [abcdefghijk].mp4' }] } });
+      const result = await new JellyfinAdapter(cfg).checkShowPublication('/usr/src/app/data/Pawel [UC1]');
+      expect([...result.files]).toEqual(['ep1 [abcdefghijk].mp4']);
+      expect(axios.get.mock.calls[1][1].params).toMatchObject({ parentId: 'show-1', recursive: true });
+    });
+
+    test('refreshes just that show, recursively, without replacing metadata or scanning the library', async () => {
+      axios.get.mockResolvedValueOnce(seriesListing).mockResolvedValueOnce({ data: { Items: [] } });
+      axios.post.mockResolvedValueOnce({});
+      await new JellyfinAdapter(cfg).checkShowPublication('/data/Pawel [UC1]', { refresh: true });
+      expect(axios.post.mock.calls).toEqual([[
+        'http://jf:8096/Items/show-1/Refresh',
+        null,
+        expect.objectContaining({ params: expect.objectContaining({ Recursive: true, replaceAllMetadata: false, replaceAllImages: false }) }),
+      ]]);
+    });
+
+    test('reports a show Jellyfin has not scanned yet', async () => {
+      axios.get.mockResolvedValue({ data: { Items: [] } });
+      await expect(new JellyfinAdapter(cfg).checkShowPublication('/data/New [UC9]')).resolves.toEqual({ status: 'show-not-found' });
+    });
+
+    test('a rejected API key is not retryable', async () => {
+      axios.get.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 401'), { response: { status: 401 } }));
+      await expect(new JellyfinAdapter(cfg).checkShowPublication('/data/x')).rejects.toMatchObject({ retryable: false });
+    });
+
+    test('a network error is retryable', async () => {
+      axios.get.mockRejectedValueOnce(Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }));
+      await expect(new JellyfinAdapter(cfg).checkShowPublication('/data/x')).rejects.toMatchObject({ retryable: true });
+    });
+  });
 });

@@ -209,9 +209,27 @@ function formatDownloadPauseMessage(status) {
   return { title, body };
 }
 
+/**
+ * Format an acquisition-health alert as plain text
+ * @param {Object} content - { title, summary, lines, footer } from healthNotifier
+ * @returns {Object} Object with title and body strings
+ */
+function formatHealthAlertMessage(content) {
+  const { title, summary, lines = [], footer } = content;
+  let body = summary;
+  if (lines.length > 0) {
+    body += `\n\n${lines.map((line) => `- ${line}`).join('\n')}`;
+  }
+  if (footer) {
+    body += `\n\n${footer}`;
+  }
+  return { title, body };
+}
+
 module.exports = {
   formatDownloadMessage,
   formatTestMessage,
   formatAutoRemovalMessage,
-  formatDownloadPauseMessage
+  formatDownloadPauseMessage,
+  formatHealthAlertMessage
 };

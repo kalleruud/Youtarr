@@ -335,10 +335,43 @@ function formatDownloadPauseMessage(status) {
   };
 }
 
+/**
+ * Format an acquisition-health alert as a Discord embed
+ * @param {Object} content - { title, summary, lines, footer } from healthNotifier
+ * @returns {Object} Discord webhook payload
+ */
+function formatHealthAlertMessage(content) {
+  const { title, summary, lines = [], footer } = content;
+  const fields = [];
+  if (lines.length > 0) {
+    fields.push({
+      name: 'Affected',
+      value: truncateFieldValueAtLineBoundary(lines.map((line) => `• ${line}`).join('\n')),
+      inline: false
+    });
+  }
+  if (footer) {
+    fields.push({ name: 'What to do', value: footer, inline: false });
+  }
+  return {
+    embeds: [{
+      title,
+      description: summary,
+      color: 0xFB8C00, // Orange: needs attention, nothing was lost
+      fields,
+      timestamp: new Date().toISOString(),
+      footer: {
+        text: 'Youtarr'
+      }
+    }]
+  };
+}
+
 module.exports = {
   formatDownloadMessage,
   formatTestMessage,
   formatPlainMessage,
   formatAutoRemovalMessage,
-  formatDownloadPauseMessage
+  formatDownloadPauseMessage,
+  formatHealthAlertMessage
 };

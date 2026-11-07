@@ -1,9 +1,12 @@
 const EventEmitter = require('events');
+const fs = require('fs');
+const path = require('path');
 const logger = require('../logger');
 const configModule = require('./configModule');
 const storageUsage = require('./storageUsage');
 const notificationModule = require('./notificationModule');
 const MessageEmitter = require('./messageEmitter');
+const tempPathManager = require('./download/tempPathManager');
 
 const DOWNLOADS_PAUSED_CODE = 'DOWNLOADS_PAUSED';
 // While paused, re-measure periodically so space freed outside Youtarr
@@ -32,7 +35,8 @@ function buildUsageReason(downloadedBytes, limit, limitBytes) {
     type: 'usage',
     currentBytes: downloadedBytes,
     limitBytes,
-    text: `downloaded videos use ${formatBytes(downloadedBytes)}, over the ${formatLimit(limit)} limit`
+    text: `downloaded videos use ${formatBytes(downloadedBytes)}, over the ${formatLimit(limit)} limit`,
+    resumeHint: `Delete or let Auto Removal remove videos until downloads total less than ${formatLimit(limit)}, or raise the limit in Settings > Storage Limits.`
   };
 }
 
@@ -41,8 +45,44 @@ function buildFreeSpaceReason(availableBytes, limit, limitBytes) {
     type: 'freeSpace',
     currentBytes: availableBytes,
     limitBytes,
-    text: `only ${formatBytes(availableBytes)} of disk space is free, below the ${formatLimit(limit)} minimum`
+    text: `only ${formatBytes(availableBytes)} of disk space is free, below the ${formatLimit(limit)} minimum`,
+    resumeHint: `Free up at least ${formatBytes(limitBytes - availableBytes)} on the downloads disk, or lower the minimum in Settings > Storage Limits.`
   };
+}
+
+function buildTempFreeSpaceReason(availableBytes, limit, limitBytes) {
+  return {
+    type: 'tempFreeSpace',
+    currentBytes: availableBytes,
+    limitBytes,
+    text: `only ${formatBytes(availableBytes)} is free in the temporary download folder, below the ${formatLimit(limit)} minimum`,
+    resumeHint: `Free up at least ${formatBytes(limitBytes - availableBytes)} where downloads are staged ("Use external temp directory" in Settings decides where), or lower the minimum in Settings > Storage Limits.`
+  };
+}
+
+// Free bytes for unprivileged writers on the filesystem holding dirPath, or
+// null when it cannot be measured (fail open).
+async function measureFreeBytes(dirPath) {
+  try {
+    const stats = await fs.promises.statfs(dirPath);
+    const free = Number(stats.bavail) * Number(stats.bsize);
+    return Number.isFinite(free) ? free : null;
+  } catch (err) {
+    logger.debug({ err, dirPath }, 'Could not measure free space in the temporary download folder');
+    return null;
+  }
+}
+
+// The temp folder may not exist until the first download; measure the
+// nearest existing ancestor, which is the filesystem it will be created on.
+async function measureTempFreeBytes(tempPath) {
+  let dir = tempPath;
+  for (;;) {
+    if (fs.existsSync(dir)) return measureFreeBytes(dir);
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
 }
 
 function describeReasons(reasons) {
@@ -65,14 +105,18 @@ function initialStatus() {
     reasons: [],
     usage: { limit: null, limitBytes: null, downloadedBytes: null },
     freeSpace: { limit: null, limitBytes: null, availableBytes: null },
+    tempFreeSpace: { limit: null, limitBytes: null, availableBytes: null },
     checkedAt: null
   };
 }
 
 /**
- * Owns the "downloads paused because storage is full" state. Two optional
- * triggers, both off by default: total size of downloaded videos over
- * downloadPauseUsageLimit, and free disk space under downloadPauseMinFreeSpace.
+ * Owns the "downloads paused because storage is full" state. Three optional
+ * triggers, all off by default: total size of downloaded videos over
+ * downloadPauseUsageLimit, free disk space under downloadPauseMinFreeSpace,
+ * and free space in the temporary download folder (the download cache, where
+ * merges need about twice a video's size) under downloadPauseMinTempFreeSpace.
+ * Every reason carries a resumeHint saying what brings downloads back.
  * A measurement that fails never pauses downloads (fail open).
  *
  * Emits 'resumed' when downloads are allowed again, so the job queue can start
@@ -183,11 +227,28 @@ class StorageGuard extends EventEmitter {
     return { limit, limitBytes, availableBytes };
   }
 
+  async _measureTempFreeSpace(config) {
+    const limit = config.downloadPauseMinTempFreeSpace || null;
+    const limitBytes = limit ? configModule.convertStorageThresholdToBytes(limit) : null;
+    if (limitBytes === null) {
+      return { limit, limitBytes, availableBytes: null, path: null };
+    }
+    let tempPath = null;
+    try {
+      tempPath = tempPathManager.getTempBasePath();
+    } catch (err) {
+      logger.warn({ err }, 'Could not resolve the temporary download folder; its free-space limit is not enforced for this check');
+    }
+    const availableBytes = tempPath ? await measureTempFreeBytes(tempPath) : null;
+    return { limit, limitBytes, availableBytes, path: tempPath };
+  }
+
   async _evaluateAndApply({ includeUsage }) {
     const config = configModule.getConfig();
-    const [usage, freeSpace] = await Promise.all([
+    const [usage, freeSpace, tempFreeSpace] = await Promise.all([
       this._measureUsage(config, includeUsage),
-      this._measureFreeSpace(config)
+      this._measureFreeSpace(config),
+      this._measureTempFreeSpace(config)
     ]);
 
     const reasons = [];
@@ -196,6 +257,9 @@ class StorageGuard extends EventEmitter {
     }
     if (freeSpace.limitBytes !== null && freeSpace.availableBytes !== null && freeSpace.availableBytes < freeSpace.limitBytes) {
       reasons.push(buildFreeSpaceReason(freeSpace.availableBytes, freeSpace.limit, freeSpace.limitBytes));
+    }
+    if (tempFreeSpace.limitBytes !== null && tempFreeSpace.availableBytes !== null && tempFreeSpace.availableBytes < tempFreeSpace.limitBytes) {
+      reasons.push(buildTempFreeSpaceReason(tempFreeSpace.availableBytes, tempFreeSpace.limit, tempFreeSpace.limitBytes));
     }
 
     const wasPaused = this.status.paused;
@@ -206,6 +270,7 @@ class StorageGuard extends EventEmitter {
       reasons,
       usage,
       freeSpace,
+      tempFreeSpace,
       checkedAt: new Date().toISOString()
     };
 

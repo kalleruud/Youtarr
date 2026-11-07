@@ -403,6 +403,34 @@ describe('JobModule', () => {
       expect(mockCleanup).toHaveBeenCalledWith('job-1');
     });
 
+    test('reports unfinished leases and pending job URLs as abandoned, also to a late listener', async () => {
+      fs.existsSync.mockReturnValue(false);
+      fs.readFileSync.mockReturnValue(JSON.stringify({ plexApiKey: 'test-key' }));
+      JobVideoDownload.findAll.mockImplementation(async ({ where }) => (
+        where.job_id === 'job-1' && where.status === 'in_progress'
+          ? [{ youtube_id: 'aaaaaaaaaaa' }, { youtube_id: 'aaaaaaaaaaa' }]
+          : []
+      ));
+      JobVideoDownload.destroy.mockResolvedValue(0);
+      Job.update = jest.fn().mockResolvedValue([1]);
+
+      JobModule = require('../jobModule');
+      await new Promise(resolve => setTimeout(resolve, 10));
+      JobModule.jobs = {
+        'job-1': { status: 'In Progress', id: 'job-1', jobType: 'Channel Downloads' },
+        'job-2': { status: 'Pending', id: 'job-2', jobType: 'Manually Added Urls', data: { urls: ['https://youtu.be/bbbbbbbbbbb'] } },
+      };
+
+      await JobModule.terminateInProgressJobs();
+      const listener = jest.fn();
+      JobModule.onRestartAbandoned(listener);
+
+      expect(listener).toHaveBeenCalledWith([
+        { jobId: 'job-1', jobType: 'Channel Downloads', youtubeIds: ['aaaaaaaaaaa'] },
+        { jobId: 'job-2', jobType: 'Manually Added Urls', youtubeIds: ['bbbbbbbbbbb'] },
+      ]);
+    });
+
     test('should handle jobs with no completed videos', async () => {
       fs.existsSync.mockReturnValue(false);
       fs.readFileSync.mockReturnValue(JSON.stringify({

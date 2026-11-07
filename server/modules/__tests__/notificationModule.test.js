@@ -1104,6 +1104,27 @@ describe('NotificationModule Integration', () => {
     });
   });
 
+  describe('sendHealthAlert', () => {
+    const alert = { title: 'Attention', summary: 'Steps failed.', lines: ['library failed'], footer: 'Open the health view.' };
+
+    it('sends the alert to every configured service', async () => {
+      const sendPromise = notificationModule.sendHealthAlert(alert);
+
+      setImmediate(() => {
+        mockProcess.emit('close', 0);
+      });
+
+      await expect(sendPromise).resolves.toBe(1);
+    });
+
+    it('sends nothing when notifications are not configured', async () => {
+      mockGetConfig.mockReturnValue({ notificationsEnabled: false, appriseUrls: [] });
+
+      await expect(notificationModule.sendHealthAlert(alert)).resolves.toBe(0);
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
+  });
+
   describe('sendDownloadPauseNotification', () => {
     const pausedStatus = {
       paused: true,

@@ -17,6 +17,7 @@ const downloadCleanup = require('./downloadCleanup');
 const transient403RetryPlanner = require('./transient403RetryPlanner');
 const failureAdvisor = require('./failureAdvisor');
 const failedVideoEnricher = require('./failedVideoEnricher');
+const health = require('../health');
 const tempSpaceProbe = require('./tempSpaceProbe');
 const { containsHttp403 } = require('./ytdlpStderrSignals');
 const { runCompletionSideEffects } = require('./downloadCompletionEffects');
@@ -305,6 +306,9 @@ async function finalizeDownloadJob({
     } catch (err) {
       logger.error({ err, jobId }, 'Failure advisor threw; continuing without diagnoses');
     }
+
+    // Durable per-video acquisition outcomes for the health view; best-effort.
+    await health.recordAcquisitionResults({ jobId, succeeded: videoData, failed: failedVideosList, wasTerminated });
 
     logger.info({ jobType, jobId }, 'Job complete (with or without errors)');
 

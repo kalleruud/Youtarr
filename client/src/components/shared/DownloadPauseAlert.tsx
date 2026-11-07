@@ -30,6 +30,7 @@ export const DownloadPauseAlert: React.FC<DownloadPauseAlertProps> = ({ status, 
       {status.reasons.map((reason) => (
         <Typography key={reason.type} variant="body2">
           {capitalize(reason.text)}.
+          {reason.resumeHint && <> <strong>To resume:</strong> {reason.resumeHint}</>}
         </Typography>
       ))}
       <Typography variant="body2" className="mt-1">

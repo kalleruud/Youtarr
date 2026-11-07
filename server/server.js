@@ -277,6 +277,13 @@ const initialize = async () => {
     // Every final status, whichever path set it, so a run never waits on a
     // job that ended without reporting its results.
     jobModule.onJobEnded((event) => downloadRunTracker.handleJobEnded(event));
+    // Acquisition health: stamp outcomes with the installed yt-dlp version,
+    // let this (server) process send rate-limited alerts, and record what the
+    // restart recovery abandoned.
+    const health = require('./modules/health');
+    require('./modules/health/runtimeVersions').setToolVersionProvider(getCachedYtDlpVersion);
+    health.enableNotifications();
+    jobModule.onRestartAbandoned((abandonedJobs) => health.recordAbandoned(abandonedJobs));
 
     // Cache yt-dlp version once during startup to keep the version endpoint fast
     refreshYtDlpVersionCache();
@@ -659,6 +666,25 @@ const initialize = async () => {
       },
     });
 
+    // Rate limiter for acquisition-health retries: each may queue a download
+    // or query Jellyfin.
+    const healthRetryRateLimiter = rateLimit({
+      windowMs: 1 * 60 * 1000,
+      max: 20,
+      standardHeaders: true,
+      legacyHeaders: false,
+      validate: {
+        trustProxy: false,
+        ip: false,
+      },
+      keyGenerator: (req) => getRateLimitAddress(req),
+      handler: (_req, res) => {
+        res.status(429).json({
+          error: 'Too many retry requests. Please wait a minute before trying again.',
+        });
+      },
+    });
+
     // Rate limiter for /api/cookies/test. Each test spawns yt-dlp and makes a
     // signed-in request to YouTube; repeated tests could draw a bot check.
     const cookieTestRateLimiter = rateLimit({
@@ -737,6 +763,7 @@ const initialize = async () => {
       filenamePreviewRateLimiter,
       cookieTestRateLimiter,
       artworkUploadRateLimiter,
+      healthRetryRateLimiter,
       configModule,
       channelModule,
       plexModule,
