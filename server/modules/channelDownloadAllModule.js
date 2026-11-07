@@ -1,3 +1,5 @@
+const policyService = require('./acquisition/acquisitionPolicyService');
+const { createHash } = require('crypto');
 const ChannelVideo = require('../models/channelvideo');
 const { Video, Channel } = require('../models');
 const downloadModule = require('./downloadModule');
@@ -72,13 +74,28 @@ class ChannelDownloadAllModule {
       }
     }
 
-    return { count: videos.length, totalDurationSeconds, missingDurations };
+    return { count: videos.length, totalDurationSeconds, missingDurations,
+      selectionVersion: await this.selectionVersion(channelId, tabType, videos),
+      plannedAction: 'download', knownSizeBytes: 0, unknownSizeCount: videos.length,
+      selection: videos.map(video => ({ youtubeId: video.youtube_id, action: 'download', estimatedSizeBytes: null })) };
   }
 
-  async startDownloadAll(channelId, tabType, overrideSettings = {}) {
+  async selectionVersion(channelId, tabType, videos) {
+    const [policy, overrides] = await Promise.all([
+      policyService.getChannel(channelId), policyService.getVideoOverridesForChannel(channelId),
+    ]);
+    return createHash('sha256').update(JSON.stringify([channelId, tabType, policy,
+      overrides.sort((a, b) => a.youtubeId.localeCompare(b.youtubeId)),
+      videos.map(v => [v.youtube_id, v.duration]).sort()])).digest('hex');
+  }
+
+  async startDownloadAll(channelId, tabType, overrideSettings = {}, selectionVersion) {
     const channel = await this.findChannelOrThrow(channelId);
     const videos = await this.getDownloadableVideos(channelId, tabType);
 
+    if (selectionVersion !== undefined && selectionVersion !== await this.selectionVersion(channelId, tabType, videos)) {
+      throw new Error('STALE_PREVIEW');
+    }
     if (videos.length === 0) {
       return { queued: 0 };
     }

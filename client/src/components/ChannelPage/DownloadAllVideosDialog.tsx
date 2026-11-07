@@ -65,6 +65,7 @@ function DownloadAllVideosDialog({
 }: DownloadAllVideosDialogProps) {
   const {
     preview,
+    previewLoading,
     starting,
     error,
     fetchPreview,
@@ -129,7 +130,7 @@ function DownloadAllVideosDialog({
 
   const contentDuration = preview ? formatContentDuration(preview) : null;
   const canContinue =
-    !preparing && !starting && Boolean(preview) && (preview?.count ?? 0) > 0;
+    !preparing && !previewLoading && !starting && Boolean(preview) && (preview?.count ?? 0) > 0;
 
   return (
     <>
@@ -145,8 +146,9 @@ function DownloadAllVideosDialog({
         </DialogTitle>
 
         <DialogContent>
+          <p>Explicit backlog download; automatic stream policies do not apply. Storage size is unknown until download. Existing copies are kept.</p>
           <div style={{ paddingTop: 8 }}>
-            {preparing && (
+            {(preparing || previewLoading) && (
               <>
                 <Typography variant="body2" color="text.secondary" style={{ marginBottom: 16 }}>
                   Loading metadata for all channel videos (up to 5,000). This can
@@ -171,7 +173,7 @@ function DownloadAllVideosDialog({
 
             {!preparing && preview && preview.count === 0 && (
               <Alert severity="info">
-                Every known video in this tab has already been downloaded.
+                No known videos in this tab are eligible. Downloaded, archived, active, unavailable, ignored and upcoming videos are excluded.
               </Alert>
             )}
 
@@ -211,6 +213,7 @@ function DownloadAllVideosDialog({
         </DialogContent>
 
         <DialogActions>
+          <Button onClick={() => fetchPreview(tabType)} disabled={preparing || previewLoading || starting}>Refresh preview</Button>
           <Button onClick={onClose} variant="contained" color="primary" autoFocus>
             Cancel
           </Button>

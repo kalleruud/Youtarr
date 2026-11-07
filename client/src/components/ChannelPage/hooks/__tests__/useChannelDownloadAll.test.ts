@@ -78,7 +78,7 @@ describe('startDownloadAll', () => {
 
     expect(axios.post).toHaveBeenCalledWith(
       `/api/channels/${CHANNEL_ID}/download-all`,
-      { tabType: 'videos', overrideSettings: { resolution: '720' } },
+      { tabType: 'videos', overrideSettings: { resolution: '720' }, selectionVersion: undefined },
       { headers: { 'x-access-token': TOKEN } }
     );
     expect(queued).toBe(42);
@@ -117,4 +117,14 @@ describe('resetPreview', () => {
     expect(result.current.preview).toBeNull();
     expect(result.current.error).toBeNull();
   });
+});
+
+test('confirms the exact preview version without enqueueing during preview', async () => {
+  axios.get.mockResolvedValue({ data: { ...PREVIEW, selectionVersion: 'selection-1' } });
+  axios.post.mockResolvedValue({ data: { queued: 1 } });
+  const { result } = renderHook(() => useChannelDownloadAll(CHANNEL_ID, TOKEN));
+  await act(async () => { await result.current.fetchPreview('videos'); });
+  expect(axios.post).not.toHaveBeenCalled();
+  await act(async () => { await result.current.startDownloadAll('videos'); });
+  expect(axios.post).toHaveBeenCalledWith(expect.any(String), { tabType: 'videos', overrideSettings: undefined, selectionVersion: 'selection-1' }, expect.any(Object));
 });

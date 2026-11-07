@@ -138,6 +138,10 @@ class AcquisitionPolicyService {
     return channel;
   }
 
+  getVideoOverridesForChannel(channelId) {
+    return acquisitionPolicyStore.getVideoOverridesForChannels([channelId]);
+  }
+
   async getChannel(channelId) {
     const channel = await this.findChannel(channelId);
     const [global, policy] = await Promise.all([

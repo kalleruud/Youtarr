@@ -1,3 +1,4 @@
+import AcquisitionStrategy from '../../shared/AcquisitionStrategy';
 import React, { ChangeEvent, useState } from 'react';
 import {
   SelectChangeEvent,
@@ -207,6 +208,7 @@ export const CoreSettingsSection: React.FC<CoreSettingsSectionProps> = ({
     <ConfigurationCard
       title="Core Settings"
     >
+      <AcquisitionStrategy endpoint="/api/acquisition-policy" token={token} />
       <Grid container spacing={2} className="mt-2">
         <Grid item xs={12}>
           <Accordion defaultExpanded style={{ border: 'var(--border-weight) solid var(--border)', borderRadius: 'var(--radius-ui)' }}>

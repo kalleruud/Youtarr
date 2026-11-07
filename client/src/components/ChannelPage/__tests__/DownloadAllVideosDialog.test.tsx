@@ -136,7 +136,7 @@ describe('DownloadAllVideosDialog', () => {
     render(<DownloadAllVideosDialog {...baseProps} runMetadataFetch={runMetadataFetch} />);
 
     expect(
-      await screen.findByText(/already been downloaded/i)
+      await screen.findByText(/No known videos in this tab are eligible/i)
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
   });

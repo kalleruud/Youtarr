@@ -3,13 +3,14 @@ import { CheckCircle as CheckCircleIcon, CloudOff as CloudOffIcon, Lock as LockI
 import { ChannelVideo } from '../types/ChannelVideo';
 import { getRemovalState } from './videoRemoval';
 
-export type VideoStatus = 'never_downloaded' | 'downloaded' | 'missing' | 'deleted' | 'members_only' | 'ignored' | 'queued' | 'downloading';
+export type VideoStatus = 'never_downloaded' | 'downloaded' | 'missing' | 'deleted' | 'members_only' | 'ignored' | 'queued' | 'downloading' | 'unavailable';
 
 export const getVideoStatus = (video: ChannelVideo): VideoStatus => {
   if (video.activity) return video.activity;
   if (video.ignored) {
     return 'ignored';
   }
+  if (video.youtube_removed && !video.added) return 'unavailable';
   if (video.availability === 'subscriber_only') {
     return 'members_only';
   }
@@ -36,6 +37,7 @@ export const getStatusColor = (status: VideoStatus) => {
       return 'error';
     case 'never_downloaded':
       return 'warning';
+    case 'unavailable':
     case 'deleted':
     case 'members_only':
     case 'ignored':
@@ -53,6 +55,7 @@ export const getStatusIcon = (status: VideoStatus) => {
       return <ScheduleIcon size={16} className="animate-pulse motion-reduce:animate-none" />;
     case 'downloaded':
       return <CheckCircleIcon size={16} data-testid="CheckCircleIcon" />;
+    case 'unavailable':
     case 'missing':
       return <CloudOffIcon size={16} data-testid="CloudOffIcon" />;
     case 'deleted':
@@ -74,6 +77,8 @@ export const getStatusLabel = (status: VideoStatus) => {
       return 'Downloading…';
     case 'downloaded':
       return 'Downloaded';
+    case 'unavailable':
+      return 'Unavailable on YouTube';
     case 'missing':
       return 'Missing';
     case 'deleted':

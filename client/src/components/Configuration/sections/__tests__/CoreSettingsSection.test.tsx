@@ -55,6 +55,10 @@ jest.mock('../../../shared/SubfolderAutocomplete', () => ({
   }
 }));
 
+jest.mock('axios', () => ({ get: jest.fn(), put: jest.fn(), isAxiosError: jest.fn(() => false) }));
+const axios = require('axios');
+const globalPolicy = { explicit: { delivery: null, live: null }, revision: 4, note: 'Existing downloads are kept.' };
+
 const createConfig = (overrides: Partial<ConfigState> = {}): ConfigState => ({
   ...DEFAULT_CONFIG,
   youtubeOutputDirectory: '/data/youtube',
@@ -95,8 +99,20 @@ const createSectionProps = (
 describe('CoreSettingsSection Component', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    axios.get.mockResolvedValue({ data: globalPolicy });
+    axios.put.mockResolvedValue({ data: globalPolicy });
     // Jest's resetMocks wipes the implementation before each test; restore it
     mockCreateSubfolder.mockResolvedValue(undefined);
+  });
+
+  test('global strategy inherits built-in defaults and saves separately from core settings', async () => {
+    const props = createSectionProps();
+    const user = userEvent.setup();
+    renderWithProviders(<CoreSettingsSection {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Save strategy' }));
+    await waitFor(() => expect(axios.put).toHaveBeenCalledWith('/api/acquisition-policy',
+      { delivery: null, live: null, expectedRevision: 4 }, expect.any(Object)));
+    expect(props.onConfigChange).not.toHaveBeenCalled();
   });
 
   describe('Component Rendering', () => {

@@ -2,6 +2,8 @@ import { useState, useCallback } from 'react';
 import axios from 'axios';
 
 export interface DownloadAllPreview {
+  selectionVersion?: string;
+  unknownSizeCount?: number;
   count: number;
   totalDurationSeconds: number;
   missingDurations: number;
@@ -61,6 +63,7 @@ export function useChannelDownloadAll(
     async (tabType: string): Promise<DownloadAllPreview | null> => {
       if (!channelId || !token) return null;
 
+      setPreview(null);
       setPreviewLoading(true);
       setError(null);
       try {
@@ -92,18 +95,19 @@ export function useChannelDownloadAll(
       try {
         const res = await axios.post<StartDownloadAllResponse>(
           `/api/channels/${channelId}/download-all`,
-          { tabType, overrideSettings },
+          { tabType, overrideSettings, selectionVersion: preview?.selectionVersion },
           { headers: authHeaders(token) }
         );
         return res.data.queued;
       } catch (err: unknown) {
+        setPreview(null);
         setError(extractMessage(err, 'Failed to start the download'));
         return null;
       } finally {
         setStarting(false);
       }
     },
-    [channelId, token]
+    [channelId, token, preview]
   );
 
   const resetPreview = useCallback(() => {

@@ -1,3 +1,4 @@
+jest.mock('../acquisition/acquisitionPolicyService', () => ({ getChannel: jest.fn().mockResolvedValue({ revision: 1 }), getVideoOverridesForChannel: jest.fn().mockResolvedValue([]) }));
 jest.mock('../../models/channelvideo', () => ({ findAll: jest.fn() }));
 jest.mock('../../models', () => ({
   Video: { findAll: jest.fn() },
@@ -136,11 +137,11 @@ describe('getPreview', () => {
 
     const preview = await channelDownloadAllModule.getPreview(CHANNEL_ID, 'videos');
 
-    expect(preview).toEqual({
+    expect(preview).toEqual(expect.objectContaining({
       count: 3,
       totalDurationSeconds: 150,
       missingDurations: 1,
-    });
+    }));
   });
 
   it('throws CHANNEL_NOT_FOUND for an unknown channel', async () => {
@@ -156,9 +157,10 @@ describe('startDownloadAll', () => {
   it('queues a specific-downloads job with watch URLs, channel id, and job label', async () => {
     ChannelVideo.findAll.mockResolvedValue([cv('a'), cv('b')]);
 
+    const preview = await channelDownloadAllModule.getPreview(CHANNEL_ID, 'videos');
     const result = await channelDownloadAllModule.startDownloadAll(CHANNEL_ID, 'videos', {
       resolution: '720',
-    });
+    }, preview.selectionVersion);
 
     expect(result).toEqual({ queued: 2 });
     expect(downloadModule.doSpecificDownloads).toHaveBeenCalledWith({
@@ -205,4 +207,24 @@ describe('startDownloadAll', () => {
       channelDownloadAllModule.startDownloadAll('UCmissing', 'videos', {})
     ).rejects.toThrow('CHANNEL_NOT_FOUND');
   });
+});
+
+it('rejects a changed selection without enqueueing', async () => {
+  ChannelVideo.findAll.mockResolvedValue([cv('one')]);
+  const preview = await channelDownloadAllModule.getPreview(CHANNEL_ID, 'videos');
+  ChannelVideo.findAll.mockResolvedValue([cv('two')]);
+  await expect(channelDownloadAllModule.startDownloadAll(CHANNEL_ID, 'videos', {}, preview.selectionVersion)).rejects.toThrow('STALE_PREVIEW');
+  expect(downloadModule.doSpecificDownloads).not.toHaveBeenCalled();
+});
+it('rejects a changed policy revision without enqueueing', async () => {
+  const preview = await channelDownloadAllModule.getPreview(CHANNEL_ID, 'videos');
+  require('../acquisition/acquisitionPolicyService').getChannel.mockResolvedValueOnce({ revision: 2 });
+  await expect(channelDownloadAllModule.startDownloadAll(CHANNEL_ID, 'videos', {}, preview.selectionVersion)).rejects.toThrow('STALE_PREVIEW');
+});
+
+it('rejects a changed video override without enqueueing', async () => {
+  const preview = await channelDownloadAllModule.getPreview(CHANNEL_ID, 'videos');
+  require('../acquisition/acquisitionPolicyService').getVideoOverridesForChannel.mockResolvedValueOnce([{ youtubeId: 'abcdefghijk', revision: 2 }]);
+  await expect(channelDownloadAllModule.startDownloadAll(CHANNEL_ID, 'videos', {}, preview.selectionVersion)).rejects.toThrow('STALE_PREVIEW');
+  expect(downloadModule.doSpecificDownloads).not.toHaveBeenCalled();
 });
