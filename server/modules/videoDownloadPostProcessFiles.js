@@ -15,6 +15,7 @@ const { resolveCaptionProvenance, resolveCaptionTimeline, resolveCutCaptions } =
 const { JobVideoDownload } = require('../models');
 const videoPersistence = require('./videoPersistence');
 const tvPublication = require('./tvPublication');
+const postProcessRecorder = require('./health/postProcessRecorder');
 const channelArtworkModule = require('./channelArtworkModule');
 const { prepareEpisodeArtwork, publishEpisodeArtwork } = require('./artwork/episodeArtwork');
 const { VIDEO_PERSISTED_MARKER } = require('./constants/outputMarkers');
@@ -848,6 +849,7 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           const probe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath], { encoding: 'utf8', timeout: 30000 });
           if (probe.status === 0 && typeof probe.stdout === 'string' && probe.stdout.trim()) actualDuration = Number(probe.stdout.trim());
         }
+        const captionResults = [];
         for (const file of filesInDir) {
           if (!isFileForVideo(file, id) || !/\.srt$/i.test(file) || !fs.existsSync(path.join(videoDirectory, file))) continue;
           const subtitlePath = path.join(videoDirectory, file);
@@ -871,7 +873,15 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           if (result.status === 'warning' || result.status === 'skipped') {
             logger.warn({ subtitlePath, reason: result.reason, err: result.error }, '[Post-Process] Caption normalization skipped; publishing the downloaded caption unchanged');
           }
+          captionResults.push({ file, result });
         }
+        // Health record of the caption step; never affects the download.
+        await postProcessRecorder.recordCaptions({
+          youtubeId: id,
+          jobId: activeJobId,
+          results: captionResults,
+          subtitlesRequested: Boolean((configModule.getConfig() || {}).subtitlesEnabled) && !isAudioFile,
+        });
 
         if (tvPublish) {
           // TV layout: the publisher stages and renames media, captions,
@@ -942,8 +952,14 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
         // Verify the final file exists
         if (!fs.existsSync(finalVideoPath)) {
           logger.error({ finalVideoPath }, '[Post-Process] Final video file doesn\'t exist after move');
+          await postProcessRecorder.recordPublicationFailure({
+            youtubeId: id, jobId: activeJobId, error: Object.assign(new Error('final file missing after move'), { code: 'ENOENT' }), targetPath: finalVideoPath,
+          });
           process.exit(1);
         }
+        await postProcessRecorder.recordPublished({
+          youtubeId: id, jobId: activeJobId, mediaPath: finalVideoPath, tvPlan: tvPublish ? tvPublish.plan : null,
+        });
 
       } catch (error) {
         logger.error({
@@ -954,6 +970,9 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           dest: targetVideoDirectory
         }, '[Post-Process] ERROR during move operation (all retries exhausted)');
         logger.error({ videoDirectory }, '[Post-Process] Files remain in temp location');
+        await postProcessRecorder.recordPublicationFailure({
+          youtubeId: id, jobId: activeJobId, error, targetPath: tvPublish ? tvPublish.plan.media.target : targetVideoDirectory,
+        });
         // Log filesystem diagnostics to help debug NFS/permission issues
         // Use async stat with timeout to avoid hanging on stale NFS mounts
         try {

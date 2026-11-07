@@ -15,6 +15,8 @@ const episodeAssignment = require('../modules/episodeAssignment');
 const createAcquisitionPolicyRoutes = require('./acquisitionPolicy');
 const acquisitionPolicyService = require('../modules/acquisition/acquisitionPolicyService');
 const tvPublication = require('../modules/tvPublication');
+const createAcquisitionHealthRoutes = require('./acquisitionHealth');
+const health = require('../modules/health');
 const createVideoSearchRoutes = require('./videoSearch');
 const createChannelSearchRoutes = require('./channelSearch');
 const createPlaylistRoutes = require('./playlists');
@@ -68,6 +70,7 @@ function registerRoutes(app, deps) {
     filenamePreviewRateLimiter,
     cookieTestRateLimiter,
     artworkUploadRateLimiter,
+    healthRetryRateLimiter,
     configModule,
     channelModule,
     plexModule,
@@ -147,6 +150,9 @@ function registerRoutes(app, deps) {
 
   // Acquisition policy routes (stream/download and livestream policies)
   app.use(createAcquisitionPolicyRoutes({ verifyToken, acquisitionPolicyService }));
+
+  // Acquisition health routes (overview, video explanation, per-step retry)
+  app.use(createAcquisitionHealthRoutes({ verifyToken, health, downloadModule, healthRetryRateLimiter }));
 
   // Playlist routes
   app.use(createPlaylistRoutes({ verifyToken, playlistModule, downloadModule, m3uGenerator, mediaServers, models, channelSettingsModule, ratingMapper, subfolderModule, playlistVideoFilters, playlistDownloadModule, storageGuard }));

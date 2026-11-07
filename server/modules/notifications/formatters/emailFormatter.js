@@ -362,9 +362,30 @@ function formatDownloadPauseMessage(status) {
   };
 }
 
+/**
+ * Format an acquisition-health alert as HTML email
+ * @param {Object} content - { title, summary, lines, footer } from healthNotifier
+ * @returns {Object} Object with title and HTML body strings
+ */
+function formatHealthAlertMessage(content) {
+  const { title, summary, lines = [], footer } = content;
+  let html = '';
+  if (lines.length > 0) {
+    html += `<ul>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`;
+  }
+  if (footer) {
+    html += `<p>${escapeHtml(footer)}</p>`;
+  }
+  return {
+    title,
+    body: buildEmailHtml(title, summary, html)
+  };
+}
+
 module.exports = {
   formatDownloadMessage,
   formatTestMessage,
   formatAutoRemovalMessage,
-  formatDownloadPauseMessage
+  formatDownloadPauseMessage,
+  formatHealthAlertMessage
 };

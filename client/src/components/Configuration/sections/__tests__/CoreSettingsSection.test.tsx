@@ -140,6 +140,21 @@ describe('CoreSettingsSection Component', () => {
     });
   });
 
+  describe('Confirm new episodes in Jellyfin switch', () => {
+    test('is hidden with the movie output profile', () => {
+      renderWithProviders(<CoreSettingsSection {...createSectionProps()} />);
+      expect(screen.queryByRole('checkbox', { name: /Confirm new episodes in Jellyfin/i })).not.toBeInTheDocument();
+    });
+
+    test('turns the targeted refresh off with the Jellyfin TV profile', async () => {
+      const user = userEvent.setup();
+      const props = createSectionProps({ config: createConfig({ libraryOutputProfile: 'jellyfinTv', jellyfinPublishRefresh: true }) });
+      renderWithProviders(<CoreSettingsSection {...props} />);
+      await user.click(screen.getByRole('checkbox', { name: /Confirm new episodes in Jellyfin/i }));
+      expect(props.onConfigChange).toHaveBeenCalledWith({ jellyfinPublishRefresh: false });
+    });
+  });
+
   describe('Create video fanart files Checkbox', () => {
     test('renders Create video fanart files checkbox', async () => {
       const user = userEvent.setup();

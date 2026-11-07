@@ -14,6 +14,7 @@ export const SETTINGS_PAGES = [
   { key: 'storage-limits', title: 'Storage Limits', description: 'Pause downloads when storage is full or over a size limit.' },
   { key: 'cookies', title: 'Cookies', description: 'Cookie configuration and login helpers.' },
   { key: 'maintenance', title: 'Maintenance & Rescan', description: 'Rescan files on disk and other maintenance actions.' },
+  { key: 'acquisition-health', title: 'Acquisition Health', description: 'Why videos are missing, caption and Jellyfin problems, storage pause, and retries.' },
   { key: 'logging', title: 'Logging', description: 'Log level and log files for troubleshooting.' },
   { key: 'notifications', title: 'Notifications', description: 'Toast notifications and alert behavior.' },
   { key: 'plex', title: 'Plex', description: 'Plex integration and library configuration.' },

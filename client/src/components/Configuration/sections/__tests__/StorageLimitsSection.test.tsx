@@ -48,6 +48,20 @@ describe('StorageLimitsSection', () => {
     useDownloadPauseStatus.mockReturnValue({ data: makeStatus(), loading: false, error: null, refresh: jest.fn() });
   });
 
+  test('shows free space in the temporary download folder', () => {
+    useDownloadPauseStatus.mockReturnValue({
+      data: makeStatus({ tempFreeSpace: { limit: '5GB', limitBytes: 1, availableBytes: 2 * 1024 ** 3 } }),
+      loading: false, error: null, refresh: jest.fn(),
+    });
+    setupSection();
+    expect(screen.getByText('2.00 GB free where downloads are staged')).toBeInTheDocument();
+  });
+
+  test('counts a temporary folder minimum as an enabled limit', () => {
+    setupSection({ config: createConfig({ downloadPauseMinTempFreeSpace: '10GB' }) });
+    expect(screen.getByText('Enabled')).toBeInTheDocument();
+  });
+
   test('shows the current size of downloaded videos while running', () => {
     setupSection();
 

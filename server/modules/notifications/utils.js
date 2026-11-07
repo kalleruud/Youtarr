@@ -334,7 +334,9 @@ function buildDownloadPauseContent(status = {}) {
     };
   }
 
-  const reasons = (Array.isArray(status.reasons) ? status.reasons : [])
+  const statusReasons = Array.isArray(status.reasons) ? status.reasons : [];
+  const resumeHints = statusReasons.map((reason) => reason.resumeHint).filter(Boolean);
+  const reasons = statusReasons
     .map((reason) => reason.text || '')
     .filter(Boolean)
     .map((text) => text.charAt(0).toUpperCase() + text.slice(1));
@@ -344,7 +346,9 @@ function buildDownloadPauseContent(status = {}) {
     summary: 'Youtarr has stopped downloading because storage is over your configured limits.',
     reasons,
     footer: 'Queued downloads are held and start automatically once storage is back within your limits. ' +
-      'Free up space, remove videos, or change the limits in Settings > Storage Limits.'
+      (resumeHints.length
+        ? `To resume: ${resumeHints.join(' ')}`
+        : 'Free up space, remove videos, or change the limits in Settings > Storage Limits.')
   };
 }
 

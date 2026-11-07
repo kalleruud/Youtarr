@@ -10,6 +10,7 @@ const jobModule = require('../jobModule');
 const filesystem = require('../filesystem');
 const subfolderModule = require('../subfolderModule');
 const m3uGenerator = require('../m3uGenerator');
+const health = require('../health');
 const { JobVideoDownload } = require('../../models');
 const Channel = require('../../models/channel');
 
@@ -88,6 +89,11 @@ async function runCompletionSideEffects({
     if (downloadedIds.length > 0) {
       require('../downloadModule').afterDownloadHook(downloadedIds).catch((err) => {
         logger.error({ err }, 'afterDownloadHook failed');
+      });
+      // Health alerts for caption/publication problems and the targeted
+      // Jellyfin check of TV-published episodes; never affects the job.
+      health.afterDownloadCompleted(downloadedIds).catch((err) => {
+        logger.error({ err }, 'Post-download health checks failed');
       });
     }
   }

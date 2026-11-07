@@ -123,6 +123,7 @@ export const CONFIG_FIELDS = {
   writeVideoNfoFiles: { default: true, trackChanges: true },
   // 'movie' (per-video folders) or 'jellyfinTv' (channel = show, year = season)
   libraryOutputProfile: { default: 'movie' as LibraryOutputProfile, trackChanges: true },
+  jellyfinPublishRefresh: { default: true, trackChanges: true },
   writeVideoFanart: { default: false, trackChanges: true },
   writeBackdropImages: { default: false, trackChanges: true },
   tvShowArtwork: { default: false, trackChanges: true },
@@ -145,6 +146,7 @@ export const CONFIG_FIELDS = {
   // Download pause (storage limits)
   downloadPauseUsageLimit: { default: '', trackChanges: true },
   downloadPauseMinFreeSpace: { default: '', trackChanges: true },
+  downloadPauseMinTempFreeSpace: { default: '', trackChanges: true },
 
   // Storage
   useTmpForDownloads: { default: false, trackChanges: true },
@@ -269,6 +271,7 @@ export const DEFAULT_CONFIG: ConfigState = {
   writeChannelPosters: CONFIG_FIELDS.writeChannelPosters.default,
   writeVideoNfoFiles: CONFIG_FIELDS.writeVideoNfoFiles.default,
   libraryOutputProfile: CONFIG_FIELDS.libraryOutputProfile.default,
+  jellyfinPublishRefresh: CONFIG_FIELDS.jellyfinPublishRefresh.default,
   writeVideoFanart: CONFIG_FIELDS.writeVideoFanart.default,
   writeBackdropImages: CONFIG_FIELDS.writeBackdropImages.default,
   tvShowArtwork: CONFIG_FIELDS.tvShowArtwork.default,
@@ -285,6 +288,7 @@ export const DEFAULT_CONFIG: ConfigState = {
   autoRemovalUsageLimit: CONFIG_FIELDS.autoRemovalUsageLimit.default,
   downloadPauseUsageLimit: CONFIG_FIELDS.downloadPauseUsageLimit.default,
   downloadPauseMinFreeSpace: CONFIG_FIELDS.downloadPauseMinFreeSpace.default,
+  downloadPauseMinTempFreeSpace: CONFIG_FIELDS.downloadPauseMinTempFreeSpace.default,
   useTmpForDownloads: CONFIG_FIELDS.useTmpForDownloads.default,
   tmpFilePath: CONFIG_FIELDS.tmpFilePath.default,
   subtitlesEnabled: CONFIG_FIELDS.subtitlesEnabled.default,

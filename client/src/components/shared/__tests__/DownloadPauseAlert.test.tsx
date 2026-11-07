@@ -26,6 +26,17 @@ const renderAlert = (props: Partial<React.ComponentProps<typeof DownloadPauseAle
   );
 
 describe('DownloadPauseAlert', () => {
+  test('says how to resume when the server gives a hint', () => {
+    render(
+      <MemoryRouter>
+        <DownloadPauseAlert
+          status={{ ...pausedStatus, reasons: [{ ...pausedStatus.reasons[0], resumeHint: 'Delete videos until downloads total less than 500 GB.' }] }}
+        />
+      </MemoryRouter>
+    );
+    expect(screen.getByTestId('download-pause-alert')).toHaveTextContent('To resume: Delete videos until downloads total less than 500 GB.');
+  });
+
   test('explains that downloads are paused', () => {
     renderAlert();
 

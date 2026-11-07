@@ -43,6 +43,51 @@ describe('storageGuard', () => {
     storageGuard._setRecheckTimer(false);
   });
 
+  describe('temporary download folder limit', () => {
+    const fs = require('fs');
+    let statfsSpy;
+
+    beforeEach(() => {
+      storageGuard._setRecheckTimer(false);
+      jest.resetModules();
+      jest.doMock('../download/tempPathManager', () => ({ getTempBasePath: jest.fn(() => '/') }));
+      storageGuard = require('../storageGuard');
+      statfsSpy = jest.spyOn(fs.promises, 'statfs').mockResolvedValue({ bavail: 2, bsize: GB });
+    });
+
+    afterEach(() => statfsSpy.mockRestore());
+
+    test('pauses when the temp folder has less free space than the minimum', async () => {
+      config.downloadPauseMinTempFreeSpace = '5GB';
+      const status = await storageGuard.refresh();
+      expect(status.reasons.map((r) => r.type)).toEqual(['tempFreeSpace']);
+    });
+
+    test('says how much to free up to resume', async () => {
+      config.downloadPauseMinTempFreeSpace = '5GB';
+      const status = await storageGuard.refresh();
+      expect(status.reasons[0].resumeHint).toContain('Free up at least 3.0 GB');
+    });
+
+    test('does not measure the temp folder when no minimum is set', async () => {
+      await storageGuard.refresh();
+      expect(statfsSpy).not.toHaveBeenCalled();
+    });
+
+    test('an unmeasurable temp folder never pauses (fail open)', async () => {
+      config.downloadPauseMinTempFreeSpace = '5GB';
+      statfsSpy.mockRejectedValue(new Error('ENOSYS'));
+      expect((await storageGuard.refresh()).paused).toBe(false);
+    });
+  });
+
+  test('every pause reason carries a resume hint', async () => {
+    config.downloadPauseUsageLimit = '5GB';
+    config.downloadPauseMinFreeSpace = '200GB';
+    const status = await storageGuard.refresh();
+    expect(status.reasons.every((r) => typeof r.resumeHint === 'string' && r.resumeHint.length > 0)).toBe(true);
+  });
+
   describe('refresh', () => {
     test('is not paused when no limits are configured', async () => {
       const status = await storageGuard.refresh();

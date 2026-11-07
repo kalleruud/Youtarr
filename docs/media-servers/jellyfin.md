@@ -99,7 +99,7 @@ With `libraryOutputProfile` set to `jellyfinTv` (Settings -> Core -> Library Out
 - The "Generate video .nfo files" setting applies to the movie layout only; TV publication always writes its NFOs.
 - The episode thumbnail is published with the episode: a byte copy of the landscape YouTube thumbnail, staged and renamed like the other files. With portrait show posters on, the show poster is written to (and Jellyfin is asked to refresh) the `Channel [UC…]` show folder once it exists; until the channel's first episode is published, the regular channel folder is used.
 
-Recommended library settings for the YouTube Shows library: Content Type **Shows**; enable the **Nfo** metadata reader; disable the **Nfo** metadata saver; disable every remote metadata downloader and image fetcher (no TheTVDB/TMDb matching for YouTube channels); mount the media folder read-only in the Jellyfin container. Jellyfin's real-time monitoring picks up new episodes; Youtarr does not yet send Jellyfin a targeted refresh after publishing.
+Recommended library settings for the YouTube Shows library: Content Type **Shows**; enable the **Nfo** metadata reader; disable the **Nfo** metadata saver; disable every remote metadata downloader and image fetcher (no TheTVDB/TMDb matching for YouTube channels); mount the media folder read-only in the Jellyfin container. Jellyfin's real-time monitoring picks up new episodes. With a Jellyfin server configured under Settings -> Jellyfin, Youtarr also confirms each new episode after its download job (`jellyfinPublishRefresh`, on by default): when Jellyfin does not list it yet, Youtarr refreshes only that show and re-checks a few times, never the whole library. Shows Jellyfin has not scanned yet stay "scan pending" in Settings -> Acquisition Health, where the check can be retried; a failed check never marks the download failed. Show folders are matched by name, so Youtarr's and Jellyfin's mount paths may differ.
 
 Not covered yet: moving existing downloads into this layout (with their watch state). Empty `Season <year>` folders left after deleting a season's last episode are not cleaned up automatically.
 
@@ -265,3 +265,9 @@ Organize content by type:
 ## File Structure
 
 See [docs/YOUTARR_DOWNLOADS_FOLDER_STRUCTURE.md](../YOUTARR_DOWNLOADS_FOLDER_STRUCTURE.md)
+
+Acquisition Health library retries reserve bounded worker capacity before claiming
+an outcome revision. A check already active for the video refuses a new retry
+without changing its revision; automatic admission during a retry claim waits for
+that worker. Capacity and stale-claim failures release the reservation. Recovery
+of library checks after a server restart still requires an explicit retry.

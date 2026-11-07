@@ -420,6 +420,13 @@ Sync is one-way (server -> Youtarr). Non-owner Plex users come from the server's
 - **Description**: How new video downloads are laid out. `movie` keeps the per-video folders and movie NFOs. `jellyfinTv` publishes each video as an episode for a Jellyfin **Shows** library: `Channel [channel-id]/Season <year>/Channel - S<year>E<nnn> - Title [video-id].<ext>` with `tvshow.nfo`, `season.nfo`, an `<episodedetails>` NFO, language-tagged subtitles and a `-thumb.jpg` thumbnail. See [Jellyfin TV (Shows) Output](media-servers/jellyfin.md#jellyfin-tv-shows-output).
 - **Note**: Only affects new downloads; existing files are not moved. MP3 downloads and videos without a known publication date keep the `movie` layout. Under `jellyfinTv`, `writeVideoNfoFiles` does not apply to episodes (their NFOs are always written).
 
+### Confirm New Episodes in Jellyfin
+- **Config Key**: `jellyfinPublishRefresh`
+- **Type**: `boolean`
+- **Default**: `true`
+- **Description**: With `libraryOutputProfile: "jellyfinTv"` and a Jellyfin server configured, check after each download job that Jellyfin lists every newly published episode. If it does not, Youtarr refreshes only that show's Series item (recursive, without replacing metadata or images) and re-checks up to three more times over about seven minutes. It never starts a whole-library scan.
+- **Note**: The result is recorded as the episode's `library` step in Settings > Acquisition Health (`ok`, scan pending, or failed) and can be retried there. It never marks the download failed. With the setting off or no Jellyfin server, the step is recorded as skipped and Jellyfin's own real-time monitoring adds the episode.
+
 ### Write Video Fanart
 - **Config Key**: `writeVideoFanart`
 - **Type**: `boolean`
@@ -926,6 +933,14 @@ When combining these with Auto Removal, set the pause usage limit at or above `a
 - **Description**: Pause downloads while free space on the disk that holds your downloads is below this size.
 - **Examples**: `"1GB"`, `"50GB"`, `"1TB"` (the UI offers 1 GB, 5 GB, 10 GB, 50 GB, 100 GB, 250 GB, 500 GB, and 1 TB)
 - **Note**: Uses the same `df`-based measurement as the storage indicator. Some mounts (network shares, overlays, bind mounts) report free space incorrectly; use `downloadPauseUsageLimit` instead on those.
+
+### Minimum Free Space in the Temporary Download Folder
+- **Config Key**: `downloadPauseMinTempFreeSpace`
+- **Type**: `string`
+- **Default**: `""` (off)
+- **Description**: Pause downloads while the temporary folder downloads are staged in (`.youtarr_tmp` in the downloads folder, or `tmpFilePath` when `useTmpForDownloads` is on) has less free space than this. Merging video and audio needs roughly twice a video's size there, so this matters most when the temp folder is on a small disk.
+- **Examples**: `"5GB"`, `"50GB"` (the UI offers the same choices as the minimum free space)
+- **Note**: Measured with `statfs` on the folder (or its nearest existing parent before the first download). An unmeasurable folder never pauses downloads. Every pause reason carries a "To resume" hint, shown in the pause banner, the pause notification and Settings > Acquisition Health.
 
 ## API Keys & Bookmarklet
 

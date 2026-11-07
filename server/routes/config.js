@@ -23,6 +23,7 @@ const STORAGE_SIZE_REGEX = /^[1-9]\d*(MB|GB|TB)$/;
 const STORAGE_SIZE_FIELDS = {
   downloadPauseUsageLimit: 'Storage limits: total size of downloads',
   downloadPauseMinFreeSpace: 'Storage limits: minimum free space',
+  downloadPauseMinTempFreeSpace: 'Storage limits: minimum free space in the temporary download folder',
   autoRemovalUsageLimit: 'Auto removal: total size of downloads',
 };
 const MAX_VIDEO_FILENAME_PREFIX_LENGTH = 160;

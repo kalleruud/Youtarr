@@ -22,6 +22,7 @@ const { unchangedSinceRead } = require('./videoRowGuard');
 const { REMOVAL_REASONS, removedColumns, presentColumns } = require('./videoRemovalState');
 const videosModule = require('./videosModule');
 const logger = require('../logger');
+const { normalizeUrlToVideoId } = require('./youtubeUrlParser');
 
 const MAX_SAVE_RETRIES = 3;
 // Library repair looks for an existing row's missing file at its guessed .mp4 path, then these.
@@ -48,6 +49,9 @@ class JobModule {
     this.jobAbandonedListeners = new Set();
     // Told whenever updateJob gives a job a final status; see onJobEnded.
     this.jobEndedListeners = new Set();
+    // Told once what startup recovery abandoned; see onRestartAbandoned.
+    this.restartAbandonedListeners = new Set();
+    this.restartAbandoned = null;
 
     if (!fs.existsSync(this.jobsDir)) {
       fs.mkdirSync(this.jobsDir, { recursive: true });
@@ -264,10 +268,15 @@ class JobModule {
   }
 
   async terminateInProgressJobs() {
+    // Jobs (and their unfinished videos) this restart abandons, for health
+    // reporting. In-progress videos are the JobVideoDownload leases that
+    // never reached 'completed'; a Pending job's videos are its URLs.
+    const abandoned = [];
     // Change the status of "In Progress" jobs to "Terminated" and recover/cleanup videos
     for (let jobId in this.jobs) {
       if (this.jobs[jobId].status === 'In Progress') {
         logger.info({ jobId }, 'Recovering job after server restart');
+        abandoned.push({ jobId, jobType: this.jobs[jobId].jobType, youtubeIds: await this.unfinishedLeaseIds(jobId) });
 
         let recoveredCount = 0;
         let outputMessage = 'Job terminated due to server restart';
@@ -353,6 +362,7 @@ class JobModule {
       if (this.jobs[jobId].status === 'Pending') {
         logger.warn({ jobId, jobType: this.jobs[jobId].jobType },
           'Terminating pending job - jobs cannot be resumed after server restart');
+        abandoned.push({ jobId, jobType: this.jobs[jobId].jobType, youtubeIds: this.requestedVideoIds(this.jobs[jobId]) });
 
         this.jobs[jobId].status = 'Terminated';
         this.jobs[jobId].output = 'Job terminated during server restart';
@@ -371,6 +381,50 @@ class JobModule {
         }
       }
     }
+    this.notifyRestartAbandoned(abandoned);
+  }
+
+  // YouTube ids of a job's download leases that never completed.
+  async unfinishedLeaseIds(jobId) {
+    try {
+      const rows = await JobVideoDownload.findAll({ where: { job_id: jobId, status: 'in_progress' } });
+      return [...new Set(rows.map((row) => row.youtube_id))];
+    } catch (err) {
+      logger.warn({ err, jobId }, 'Could not read unfinished downloads of an abandoned job');
+      return [];
+    }
+  }
+
+  requestedVideoIds(job) {
+    const urls = (job && job.data && Array.isArray(job.data.urls)) ? job.data.urls : [];
+    return [...new Set(urls.flatMap((url) => {
+      try { return [normalizeUrlToVideoId(url).id]; } catch { return []; }
+    }))];
+  }
+
+  /**
+   * Listen for what startup recovery abandoned (called once per process,
+   * also for a listener added after recovery ran).
+   * @param {Function} listener - called with [{ jobId, jobType, youtubeIds }]
+   * @returns {Function} unsubscribe
+   */
+  onRestartAbandoned(listener) {
+    this.restartAbandonedListeners.add(listener);
+    if (this.restartAbandoned) this.callRestartListener(listener, this.restartAbandoned);
+    return () => this.restartAbandonedListeners.delete(listener);
+  }
+
+  callRestartListener(listener, abandoned) {
+    try {
+      Promise.resolve(listener(abandoned)).catch((err) => logger.warn({ err }, 'Restart recovery listener failed'));
+    } catch (err) {
+      logger.warn({ err }, 'Restart recovery listener failed');
+    }
+  }
+
+  notifyRestartAbandoned(abandoned) {
+    this.restartAbandoned = abandoned;
+    for (const listener of this.restartAbandonedListeners) this.callRestartListener(listener, abandoned);
   }
 
   async saveJobsAndStartNext() {
