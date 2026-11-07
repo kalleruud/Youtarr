@@ -101,6 +101,17 @@ With `libraryOutputProfile` set to `jellyfinTv` (Settings -> Core -> Library Out
 
 Recommended library settings for the YouTube Shows library: Content Type **Shows**; enable the **Nfo** metadata reader; disable the **Nfo** metadata saver; disable every remote metadata downloader and image fetcher (no TheTVDB/TMDb matching for YouTube channels); mount the media folder read-only in the Jellyfin container. Jellyfin's real-time monitoring picks up new episodes; Youtarr does not yet send Jellyfin a targeted refresh after publishing.
 
+### Streamed and downloaded copies
+
+One video is one episode, whichever way it is delivered (issue #14). When a streamable episode (a STRM entry, published by the STRM publisher once on-demand streaming ships) is downloaded later:
+
+- The download is published under the STRM entry's exact file name stem, so the NFO, captions and thumbnail stay shared and the season/episode numbers are unchanged. The media file lands first and the `.strm` file is removed right after it, under the episode's publication lease, so the episode is never shown as two unrelated items and never disappears. A failed download leaves the STRM entry, and therefore the streamable episode, untouched.
+- Jellyfin creates a new item for the new file. Youtarr carries the watch state it had synced for the episode over to that item: until it is restored, the watch-status sync does not reset the stored state (Jellyfin shows the new item as unwatched only because it is new). Once Jellyfin has scanned the new file, the next sync writes the played flag, play count, resume position and last-played date to the new item for each user, unless that user already has state on it, which wins. Playlists holding the episode are then re-synced to the new item. A restore that keeps failing (the file is never scanned) is marked `failed` after about a week of syncs, and the stored state is kept; Emby and Plex report `unsupported` and also keep the stored state. `GET /api/videos/{youtubeId}/representation` shows each carryover's status.
+- Playback prefers a complete, verified local file, without contacting YouTube, so a downloaded episode keeps playing after the video is removed from YouTube. Without a usable local file it falls back to streaming; a partial recording is used only when selected explicitly or when nothing else is available.
+- Changing a channel between streaming and downloading never deletes or replaces a copy. Removing a local copy while keeping the episode streamable is a separate action: `GET /api/videos/{youtubeId}/representation` previews it (what is removed - only the media file - and what is kept - NFO, captions, thumbnail), and `POST /api/videos/{youtubeId}/representation/evict` with the preview's `expectedRevision` carries it out. It is refused for protected videos, videos of channels protected from automatic removal, videos no longer on YouTube, and while streaming or STRM publication is unavailable (which is the case in this release).
+
+This replacement strategy relies on Jellyfin picking up the replaced file as a new item and resolving it by file name; it has been verified against fixtures and mocked Jellyfin responses only, not against a running Jellyfin or JellySee.
+
 Not covered yet: moving existing downloads into this layout (with their watch state). Empty `Season <year>` folders left after deleting a season's last episode are not cleaned up automatically.
 
 ## Metadata Configuration

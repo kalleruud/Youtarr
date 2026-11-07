@@ -96,6 +96,21 @@ const mockTvPublication = {
 
 jest.mock('../tvPublication', () => mockTvPublication);
 
+const mockLease = { youtubeId: 'abc123', owner: 'test-owner' };
+const mockRepresentations = {
+  LEASE_OPERATIONS: { DOWNLOAD_PROMOTION: 'download-promotion' },
+  PROMOTION_LEASE_WAIT_MS: 150000,
+  withPublicationLease: jest.fn(),
+  promoteDownloadedAsset: jest.fn(),
+};
+function resetMockRepresentations() {
+  mockRepresentations.withPublicationLease.mockImplementation((id, operation, fn) => fn(mockLease));
+  mockRepresentations.promoteDownloadedAsset.mockResolvedValue({ changed: true, retiredStream: false, carryovers: 0 });
+}
+resetMockRepresentations();
+
+jest.mock('../representation', () => mockRepresentations);
+
 jest.mock('../channelArtworkModule', () => ({
   isEnabled: jest.fn(() => false), syncChannel: jest.fn().mockResolvedValue(),
 }));
@@ -884,6 +899,24 @@ describe('videoDownloadPostProcessFiles', () => {
 
         expect(fs.remove).not.toHaveBeenCalledWith(expect.stringMatching(/\.srt$/));
       });
+    });
+
+    it('records the moved file as the local copy of the episode', async () => {
+      process.argv = ['node', 'script', tempVideoPath];
+      tempPathManager.isEnabled.mockReturnValue(true);
+      tempPathManager.isTempPath.mockReturnValue(true);
+      tempPathManager.convertTempToFinal.mockImplementation((path) => path.replace('/tmp/youtarr-downloads', '/library'));
+      const tempJsonPath = '/tmp/youtarr-downloads/Channel/Video Title [abc123].info.json';
+      fs.existsSync.mockImplementation((path) => path === tempJsonPath || path === finalVideoPath);
+      fs.pathExists.mockResolvedValue(false);
+      resetMockRepresentations();
+
+      await loadModule();
+      await settleAsync();
+
+      expect(mockRepresentations.promoteDownloadedAsset).toHaveBeenCalledWith(
+        'abc123', { location: expect.stringContaining('/library/Channel') }, { lease: null }
+      );
     });
 
     it('successfully moves files from temp to final location', async () => {
@@ -2207,6 +2240,7 @@ describe('videoDownloadPostProcessFiles', () => {
     };
 
     beforeEach(() => {
+      resetMockRepresentations();
       configModule.__setConfig({ writeChannelPosters: false, writeVideoNfoFiles: true, libraryOutputProfile: 'jellyfinTv' });
       mockTvPublication.isEnabled.mockReturnValue(true);
       mockTvPublication.prepareDownload.mockResolvedValue(prepared);
@@ -2280,6 +2314,37 @@ describe('videoDownloadPostProcessFiles', () => {
       await loadModule();
       await settleAsync(10);
       expect(process.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('publishes under the episode publication lease', async () => {
+      await loadModule();
+      await settleAsync(10);
+      expect(mockRepresentations.withPublicationLease).toHaveBeenCalledWith(
+        'abc123', 'download-promotion', expect.any(Function), { waitMs: 150000, onBusy: 'proceed' }
+      );
+    });
+
+    it('promotes the published episode file inside the same lease', async () => {
+      await loadModule();
+      await settleAsync(10);
+      expect(mockRepresentations.promoteDownloadedAsset).toHaveBeenCalledWith('abc123', { location: episodePath }, { lease: mockLease });
+    });
+
+    it('does not promote anything when publication fails', async () => {
+      mockTvPublication.publishDownload.mockRejectedValue(new Error('disk full'));
+      await loadModule();
+      await settleAsync(10);
+      expect(mockRepresentations.promoteDownloadedAsset).not.toHaveBeenCalled();
+    });
+
+    it('still completes the download when promotion fails', async () => {
+      mockRepresentations.promoteDownloadedAsset.mockRejectedValue(new Error('database unavailable'));
+      await loadModule();
+      await settleAsync(10);
+      expect(JobVideoDownload.update).toHaveBeenCalledWith(
+        { status: 'completed', file_path: episodePath },
+        expect.any(Object)
+      );
     });
 
     it('never publishes MP3 downloads as episodes', async () => {

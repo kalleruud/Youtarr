@@ -15,6 +15,7 @@ const { resolveCaptionProvenance, resolveCaptionTimeline, resolveCutCaptions } =
 const { JobVideoDownload } = require('../models');
 const videoPersistence = require('./videoPersistence');
 const tvPublication = require('./tvPublication');
+const representations = require('./representation');
 const channelArtworkModule = require('./channelArtworkModule');
 const { prepareEpisodeArtwork, publishEpisodeArtwork } = require('./artwork/episodeArtwork');
 const { VIDEO_PERSISTED_MARKER } = require('./constants/outputMarkers');
@@ -303,6 +304,20 @@ async function copyChannelBackdropIfNeeded(channelId, channelFolderPath) {
 // Delete the subtitle sidecars that subtitleSidecarPruner marks as extra for
 // this video: auto-generated tracks superseded by an uploaded track of the
 // same language, or extra machine-translated variants next to the bare one.
+// Record the finalized file as the episode's verified local copy (#14). A
+// failure here never fails the download: the file is in place, and playback
+// still finds it through the video's filePath.
+async function promoteLocalCopy(youtubeId, mediaPath, lease = null) {
+  try {
+    const promoted = await representations.promoteDownloadedAsset(youtubeId, { location: mediaPath }, { lease });
+    if (promoted.retiredStream || promoted.carryovers) {
+      logger.info({ youtubeId, carryovers: promoted.carryovers }, '[Post-Process] Local copy replaced the streamed episode entry');
+    }
+  } catch (err) {
+    logger.error({ err, youtubeId }, '[Post-Process] Could not record the local copy as the episode representation');
+  }
+}
+
 async function pruneSubtitleSidecars(videoDirectory, fileNames, youtubeId, jsonData) {
   const config = configModule.getConfig() || {};
   if (!config.subtitlesEnabled) return;
@@ -877,7 +892,19 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           // TV layout: the publisher stages and renames media, captions,
           // thumbnail and NFOs into the season folder, then the temp leftovers
           // of this video are discarded.
-          const published = await tvPublication.publishDownload(tvPublish);
+          // Under the episode's publication lease, so a STRM refresh of the
+          // same video cannot interleave; promotion then retires its STRM
+          // entry and carries watch state over (#14).
+          const published = await representations.withPublicationLease(
+            id,
+            representations.LEASE_OPERATIONS.DOWNLOAD_PROMOTION,
+            async (lease) => {
+              const result = await tvPublication.publishDownload(tvPublish);
+              await promoteLocalCopy(id, result.mediaPath, lease);
+              return result;
+            },
+            { waitMs: representations.PROMOTION_LEASE_WAIT_MS, onBusy: 'proceed' }
+          );
           finalVideoPath = published.mediaPath;
           if (isFlatMode) {
             for (const file of await fs.readdir(videoDirectory)) {
@@ -944,6 +971,7 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           logger.error({ finalVideoPath }, '[Post-Process] Final video file doesn\'t exist after move');
           process.exit(1);
         }
+        if (!tvPublish && !isAudioFile) await promoteLocalCopy(id, finalVideoPath);
 
       } catch (error) {
         logger.error({
