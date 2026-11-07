@@ -36,20 +36,36 @@ function createFakeStore() {
     RepresentationRevisionError: RevisionErrorClass,
     async getHead(id) { await tick(); const h = head(id); return { revision: h.revision, selectedRepresentationId: h.selected, lease: h.owner ? { operation: h.operation } : null }; },
     async list(id) { await tick(); return rows.filter(r => r.youtubeId === id).map(view); },
-    async listPublishedStreamLocations() { return new Map(rows.filter(r => r.kind === 'strm' && r.state === 'published').map(r => [r.youtubeId, r.location])); },
+    async listStreamEntries() {
+      const streams = rows.filter(r => r.kind === 'strm');
+      return {
+        published: new Map(streams.filter(r => r.state === 'published').map(r => [r.youtubeId, r.location])),
+        youtubeIds: new Set(streams.map(r => r.youtubeId)),
+      };
+    },
+    // Test helper: the current holder's lease runs out (it paused too long),
+    // so the next acquireLease takes it over.
+    expireLease(id) { head(id).expired = true; },
     async acquireLease(id, operation, { waitMs = 0 } = {}) {
       const deadline = Date.now() + waitMs;
       for (;;) {
         await tick();
         const h = head(id);
-        if (!h.owner) {
+        if (!h.owner || h.expired) {
           h.owner = `owner-${++owners}`;
           h.operation = operation;
+          h.expired = false;
           return { youtubeId: id, owner: h.owner, operation };
         }
         if (Date.now() >= deadline) throw new RepresentationLeaseErrorClass('LEASE_BUSY', 'busy');
         await new Promise(resolve => setTimeout(resolve, 5));
       }
+    },
+    async renewLease(lease) {
+      await tick();
+      const h = head(lease.youtubeId);
+      if (h.owner !== lease.owner) throw new RepresentationLeaseErrorClass('LEASE_LOST', 'lost');
+      h.expired = false;
     },
     async releaseLease(lease) {
       await tick();

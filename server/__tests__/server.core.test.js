@@ -306,7 +306,7 @@ const createServerModule = ({
 
         jest.doMock('../modules/acquisition/acquisitionPolicyService', () => ({ AcquisitionPolicyError: class extends Error {} }));
         jest.doMock('../modules/representation', () => ({ RepresentationError: class extends Error {}, RepresentationRevisionError: class extends Error {}, RepresentationLeaseError: class extends Error {} }));
-        jest.doMock('../modules/representation/representationStore', () => ({ listPublishedStreamLocations: jest.fn().mockResolvedValue(new Map()) }));
+        jest.doMock('../modules/representation/representationStore', () => ({ listStreamEntries: jest.fn().mockResolvedValue({ published: new Map(), youtubeIds: new Set() }) }));
         jest.doMock('../modules/representation/watchContinuity', () => ({ prepareServer: jest.fn(), settleListed: jest.fn(), rowKey: jest.fn() }));
 
         jest.doMock('../modules/tvPublication', () => ({ isEnabled: jest.fn(() => false), regenerateMetadata: jest.fn() }));

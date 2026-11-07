@@ -123,10 +123,13 @@ class TvPublication {
     return planPublication({ video, assignment, assets, layout });
   }
 
-  /** Publish a prepareDownload result with the sidecars present right now. */
-  async publishDownload(prepared) {
+  /**
+   * Publish a prepareDownload result with the sidecars present right now.
+   * keepStreamEntries leaves the episode's STRM entries in place (#14).
+   */
+  async publishDownload(prepared, { keepStreamEntries = false } = {}) {
     const plan = await this.planDownload(prepared.input);
-    const result = await tvPublisher.publish(plan);
+    const result = await tvPublisher.publish(plan, { keepStreamEntries });
     logger.info({ youtubeId: plan.youtubeId, season: plan.season, episode: plan.episode, mediaPath: result.mediaPath },
       'Published TV episode');
     return { ...result, plan };

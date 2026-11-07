@@ -307,9 +307,9 @@ async function copyChannelBackdropIfNeeded(channelId, channelFolderPath) {
 // Record the finalized file as the episode's verified local copy (#14). A
 // failure here never fails the download: the file is in place, and playback
 // still finds it through the video's filePath.
-async function promoteLocalCopy(youtubeId, mediaPath, lease = null) {
+async function promoteLocalCopy(youtubeId, mediaPath) {
   try {
-    const promoted = await representations.promoteDownloadedAsset(youtubeId, { location: mediaPath }, { lease });
+    const promoted = await representations.promoteDownloadedAsset(youtubeId, { location: mediaPath });
     if (promoted.retiredStream || promoted.carryovers) {
       logger.info({ youtubeId, carryovers: promoted.carryovers }, '[Post-Process] Local copy replaced the streamed episode entry');
     }
@@ -892,19 +892,13 @@ async function resolveTrackedOwnerChannelId(youtubeId, metadataChannelId) {
           // TV layout: the publisher stages and renames media, captions,
           // thumbnail and NFOs into the season folder, then the temp leftovers
           // of this video are discarded.
-          // Under the episode's publication lease, so a STRM refresh of the
-          // same video cannot interleave; promotion then retires its STRM
-          // entry and carries watch state over (#14).
-          const published = await representations.withPublicationLease(
-            id,
-            representations.LEASE_OPERATIONS.DOWNLOAD_PROMOTION,
-            async (lease) => {
-              const result = await tvPublication.publishDownload(tvPublish);
-              await promoteLocalCopy(id, result.mediaPath, lease);
-              return result;
-            },
-            { waitMs: representations.PROMOTION_LEASE_WAIT_MS, onBusy: 'proceed' }
-          );
+          // A streamed episode's watch state is recorded before its STRM
+          // entry is replaced, under the episode's publication lease; a video
+          // without a STRM entry publishes as before, without waiting (#14).
+          const published = await representations.publishDownloadedEpisode(id, {
+            plannedLocation: tvPublish.plan.media.target,
+            publish: (options) => tvPublication.publishDownload(tvPublish, options),
+          });
           finalVideoPath = published.mediaPath;
           if (isFlatMode) {
             for (const file of await fs.readdir(videoDirectory)) {

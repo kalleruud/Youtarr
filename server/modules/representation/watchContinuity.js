@@ -61,18 +61,33 @@ class WatchContinuity {
   get STATUSES() { return CARRYOVER_STATUSES; }
 
   /**
-   * Record the stored watch state of a video for restoration at toLocation.
-   * Replaces any earlier carryover of the same (video, server, user).
-   * @returns {Promise<number>} carryovers recorded
+   * Make sure the stored watch state of a video is held for restoration at
+   * toLocation, before the entry at fromLocation leaves the media server.
+   * Idempotent: a carryover already aimed at toLocation is kept as it is
+   * (status included), so a retried promotion or eviction only adds the
+   * snapshots an earlier, interrupted run did not record. A carryover aimed
+   * elsewhere (an earlier change of file) is replaced. Callers only use it
+   * for changes to or from a STRM entry, so carryovers exist only for videos
+   * with a STRM record (watchStatusSync relies on that).
+   * @returns {Promise<number>} carryovers recorded by this call
    */
-  async recordCarryovers({ youtubeId, fromLocation, toLocation }) {
+  async ensureCarryovers({ youtubeId, fromLocation, toLocation }) {
     if (!toLocation || fromLocation === toLocation) return 0;
     const video = await Video.findOne({ where: { youtubeId }, attributes: ['id'] });
     if (!video) return 0;
     const rows = (await VideoWatchStatus.findAll({ where: { video_id: video.id }, raw: true })).filter(hasWatchState);
     if (rows.length === 0) return 0;
+    const existing = await WatchStateCarryover.findAll({
+      where: { video_id: video.id },
+      attributes: ['server_type', 'server_user_id', 'to_location'],
+      raw: true,
+    });
+    const aimed = new Set(existing.filter(row => row.to_location === toLocation)
+      .map(row => `${row.server_type}:${row.server_user_id}`));
+    const missing = rows.filter(row => !aimed.has(`${row.server_type}:${String(row.server_user_id)}`));
+    if (missing.length === 0) return 0;
     const now = new Date();
-    await WatchStateCarryover.bulkCreate(rows.map(row => ({
+    await WatchStateCarryover.bulkCreate(missing.map(row => ({
       video_id: video.id,
       youtube_id: youtubeId,
       server_type: row.server_type,
@@ -95,8 +110,8 @@ class WatchContinuity {
         'from_location', 'to_location', 'status', 'attempts', 'last_error', 'updated_at',
       ],
     });
-    logger.info({ youtubeId, carryovers: rows.length }, 'Recorded watch state to carry over to the new media server item');
-    return rows.length;
+    logger.info({ youtubeId, carryovers: missing.length }, 'Recorded watch state to carry over to the new media server item');
+    return missing.length;
   }
 
   /** Carryovers of one video, for the representation status API. */

@@ -43,6 +43,25 @@ async function findStreamEntries(dir, youtubeId) {
 }
 
 /**
+ * Usable local media files of youtubeId in dir (none when the folder is
+ * unreadable). Finds a download that landed without the publication lease.
+ */
+async function findLocalMedia(dir, youtubeId) {
+  let names;
+  try {
+    names = await fs.readdir(dir);
+  } catch (err) {
+    return [];
+  }
+  const found = [];
+  for (const name of names.filter(n => !n.startsWith('.')).sort()) {
+    const location = path.join(dir, name);
+    if ((await inspectLocalMedia(location, youtubeId)).usable) found.push(location);
+  }
+  return found;
+}
+
+/**
  * Sidecars kept when only the media is evicted: everything in the media's
  * folder that belongs to the video, except the media itself.
  */
@@ -61,4 +80,4 @@ async function listEpisodeSidecars(mediaLocation, youtubeId) {
     .map(name => path.join(dir, name));
 }
 
-module.exports = { inspectLocalMedia, isStreamEntryFor, findStreamEntries, listEpisodeSidecars };
+module.exports = { inspectLocalMedia, isStreamEntryFor, findStreamEntries, findLocalMedia, listEpisodeSidecars };

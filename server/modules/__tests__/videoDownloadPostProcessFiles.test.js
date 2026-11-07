@@ -96,15 +96,12 @@ const mockTvPublication = {
 
 jest.mock('../tvPublication', () => mockTvPublication);
 
-const mockLease = { youtubeId: 'abc123', owner: 'test-owner' };
 const mockRepresentations = {
-  LEASE_OPERATIONS: { DOWNLOAD_PROMOTION: 'download-promotion' },
-  PROMOTION_LEASE_WAIT_MS: 150000,
-  withPublicationLease: jest.fn(),
+  publishDownloadedEpisode: jest.fn(),
   promoteDownloadedAsset: jest.fn(),
 };
 function resetMockRepresentations() {
-  mockRepresentations.withPublicationLease.mockImplementation((id, operation, fn) => fn(mockLease));
+  mockRepresentations.publishDownloadedEpisode.mockImplementation((id, { publish }) => publish({ keepStreamEntries: false }));
   mockRepresentations.promoteDownloadedAsset.mockResolvedValue({ changed: true, retiredStream: false, carryovers: 0 });
 }
 resetMockRepresentations();
@@ -915,7 +912,7 @@ describe('videoDownloadPostProcessFiles', () => {
       await settleAsync();
 
       expect(mockRepresentations.promoteDownloadedAsset).toHaveBeenCalledWith(
-        'abc123', { location: expect.stringContaining('/library/Channel') }, { lease: null }
+        'abc123', { location: expect.stringContaining('/library/Channel') }
       );
     });
 
@@ -2316,29 +2313,28 @@ describe('videoDownloadPostProcessFiles', () => {
       expect(process.exit).toHaveBeenCalledWith(1);
     });
 
-    it('publishes under the episode publication lease', async () => {
+    it('publishes through the episode representations at the planned path', async () => {
       await loadModule();
       await settleAsync(10);
-      expect(mockRepresentations.withPublicationLease).toHaveBeenCalledWith(
-        'abc123', 'download-promotion', expect.any(Function), { waitMs: 150000, onBusy: 'proceed' }
+      expect(mockRepresentations.publishDownloadedEpisode).toHaveBeenCalledWith(
+        'abc123', { plannedLocation: episodePath, publish: expect.any(Function) }
       );
     });
 
-    it('promotes the published episode file inside the same lease', async () => {
+    it('passes the STRM decision on to the TV publisher', async () => {
+      mockRepresentations.publishDownloadedEpisode.mockImplementation((id, { publish }) => publish({ keepStreamEntries: true }));
       await loadModule();
       await settleAsync(10);
-      expect(mockRepresentations.promoteDownloadedAsset).toHaveBeenCalledWith('abc123', { location: episodePath }, { lease: mockLease });
+      expect(mockTvPublication.publishDownload).toHaveBeenCalledWith(prepared, { keepStreamEntries: true });
     });
 
-    it('does not promote anything when publication fails', async () => {
-      mockTvPublication.publishDownload.mockRejectedValue(new Error('disk full'));
+    it('does not promote the TV episode a second time after publication', async () => {
       await loadModule();
       await settleAsync(10);
       expect(mockRepresentations.promoteDownloadedAsset).not.toHaveBeenCalled();
     });
 
-    it('still completes the download when promotion fails', async () => {
-      mockRepresentations.promoteDownloadedAsset.mockRejectedValue(new Error('database unavailable'));
+    it('still completes the download when the episode publication returns its file', async () => {
       await loadModule();
       await settleAsync(10);
       expect(JobVideoDownload.update).toHaveBeenCalledWith(

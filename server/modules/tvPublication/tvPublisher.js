@@ -150,13 +150,16 @@ async function collectAssets(mediaPath, { thumbnailNames = ['.jpg'] } = {}) {
 
 // After the media landed: files of the episode under an older stem, and other
 // media/STRM files under this stem, are stale. A STRM publication never
-// removes a media file: a local copy is only ever removed on purpose.
-async function removeStaleEpisodeFiles(plan) {
+// removes a media file: a local copy is only ever removed on purpose. With
+// keepStreamEntries, STRM entries stay too: their watch state could not be
+// recorded yet, so the representation facade removes them later (#14).
+async function removeStaleEpisodeFiles(plan, { keepStreamEntries = false } = {}) {
   const removed = [];
   const publishingStream = isStreamEntryName(plan.media.target);
   for (const name of await readdirSafe(plan.seasonDir)) {
     if (isStagingFile(name) || !isFileForVideo(name, plan.youtubeId)) continue;
     if (publishingStream && isMediaName(name)) continue;
+    if (keepStreamEntries && isStreamEntryName(name)) continue;
     if (name.startsWith(`${plan.stem}.`)) {
       const isEntry = isMediaName(name) || isStreamEntryName(name);
       if (!isEntry || name === path.basename(plan.media.target)) continue;
@@ -177,9 +180,11 @@ async function removeStaleEpisodeFiles(plan) {
  * Publish a plan. Sources that already are their target (a metadata-only
  * republish) are left in place. On failure, staging files are removed and a
  * staged media file is moved back to its source, then the error is rethrown.
+ * @param {Object} plan
+ * @param {{keepStreamEntries?: boolean}} [options] - leave the episode's STRM entries in place
  * @returns {Promise<{mediaPath: string, written: string[], removed: string[]}>}
  */
-async function publish(plan) {
+async function publish(plan, { keepStreamEntries = false } = {}) {
   await fs.ensureDir(plan.seasonDir);
   const written = [];
   const mediaInPlace = path.resolve(plan.media.source) === path.resolve(plan.media.target);
@@ -223,7 +228,7 @@ async function publish(plan) {
       logger.warn({ err, source: sidecar.source }, 'Could not remove a published sidecar source');
     });
   }
-  const removed = await removeStaleEpisodeFiles(plan);
+  const removed = await removeStaleEpisodeFiles(plan, { keepStreamEntries });
   return { mediaPath: plan.media.target, written, removed };
 }
 

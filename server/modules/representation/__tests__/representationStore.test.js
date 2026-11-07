@@ -18,6 +18,37 @@ beforeEach(() => {
   Head.bulkCreate.mockResolvedValue([]);
 });
 
+describe('renewLease', () => {
+  test('extends a lease the caller still owns', async () => {
+    Head.update.mockResolvedValue([1]);
+    await store.renewLease(lease);
+    expect(Head.update.mock.calls[0][1].where).toEqual({ youtube_id: 'vid12345678', lease_owner: 'me' });
+  });
+
+  test('accepts a renewal that changed nothing while the caller still owns the lease', async () => {
+    Head.update.mockResolvedValue([0]);
+    Head.findByPk.mockResolvedValue({ lease_owner: 'me' });
+    await expect(store.renewLease(lease)).resolves.toBeUndefined();
+  });
+
+  test('reports a lease another operation took over', async () => {
+    Head.update.mockResolvedValue([0]);
+    Head.findByPk.mockResolvedValue({ lease_owner: 'other' });
+    await expect(store.renewLease(lease)).rejects.toMatchObject({ code: 'LEASE_LOST' });
+  });
+});
+
+describe('listStreamEntries', () => {
+  test('lists published STRM locations and every video with a STRM record', async () => {
+    VideoRepresentation.findAll.mockResolvedValue([
+      { youtube_id: 'a', state: 'published', location: '/x/a.strm' },
+      { youtube_id: 'b', state: 'retired', location: '/x/b.strm' },
+    ]);
+    const { published, youtubeIds } = await store.listStreamEntries();
+    expect([[...published], [...youtubeIds]]).toEqual([[['a', '/x/a.strm']], ['a', 'b']]);
+  });
+});
+
 describe('acquireLease', () => {
   test('claims a free or expired lease with a conditional update', async () => {
     Head.update.mockResolvedValue([1]);

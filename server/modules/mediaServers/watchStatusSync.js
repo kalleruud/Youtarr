@@ -132,7 +132,7 @@ class WatchStatusSync {
       // Missing (removed) videos are candidates too: the file may have moved
       // out of Youtarr's view but still exist on a media server and keep
       // accruing watch state.
-      const videos = await this._loadCandidateVideos();
+      const { videos, streamedVideoIds } = await this._loadCandidateVideos();
       logger.info({ trigger, videoCount: videos.length, serverCount: adapters.length }, 'Starting watch status sync');
 
       // Across servers, so a video on two servers counts once.
@@ -143,7 +143,7 @@ class WatchStatusSync {
         try {
           // Watch state carried over from an episode's previous file is
           // restored first, so the listing below already includes it.
-          const continuity = await this._prepareContinuity(adapter);
+          const continuity = await this._prepareContinuity(adapter, streamedVideoIds);
           continuity.restoredYoutubeIds.forEach((id) => restoredYoutubeIds.add(id));
           const opts = serverType === 'plex' ? await this._plexFetchOpts() : {};
           const { entries, users, historyCursor, completeUserIds } = await adapter.fetchWatchStates(opts);
@@ -213,39 +213,59 @@ class WatchStatusSync {
 
   // Videos with a file, plus videos whose only visible entry is a published
   // STRM entry (#13/#14): those are matched at the STRM location, so their
-  // watch state is stored before a download replaces the entry.
+  // watch state is stored before a download replaces the entry. One query
+  // over the STRM records also says which videos can have carried-over watch
+  // state at all (streamedVideoIds; null when it could not be read).
   async _loadCandidateVideos() {
-    let streamLocations = new Map();
+    let streams = null;
     try {
-      streamLocations = await representationStore.listPublishedStreamLocations();
+      streams = await representationStore.listStreamEntries();
     } catch (err) {
       logger.warn({ err }, 'Could not read published STRM entries; syncing downloaded files only');
     }
+    const streamLocations = streams ? streams.published : new Map();
     const hasFile = { filePath: { [Op.ne]: null } };
-    const videos = await Video.findAll({
+    const rows = await Video.findAll({
       where: streamLocations.size > 0
         ? { [Op.or]: [hasFile, { youtubeId: { [Op.in]: [...streamLocations.keys()] } }] }
         : hasFile,
       attributes: ['id', 'youtubeId', 'filePath', 'removed'],
       raw: true,
     });
-    return videos.map((video) => {
+    const videos = rows.map((video) => {
       const streamLocation = streamLocations.get(video.youtubeId);
       if (!streamLocation || (video.filePath && !video.removed)) return video;
       return { ...video, filePath: streamLocation, removed: false };
     });
+    const streamedVideoIds = streams
+      ? new Set(videos.filter((video) => streams.youtubeIds.has(video.youtubeId)).map((video) => video.id))
+      : null;
+    return { videos, streamedVideoIds };
   }
 
-  // Carried-over watch state (see representation/watchContinuity). An
-  // unreachable server skips the server as usual; any other failure holds
-  // back every reset of this server, so nothing is reset by mistake.
-  async _prepareContinuity(adapter) {
+  // Carried-over watch state (see representation/watchContinuity). Carryovers
+  // are only ever recorded for videos with a STRM record, so with none there
+  // is nothing to hold and nothing is queried: the sync behaves exactly as
+  // it did before representations existed. An unreachable server skips the
+  // server as usual. If the carryovers cannot be read, resets are held back
+  // for the videos with a STRM record (they might have one). If the STRM
+  // records could not be read either, while the videos table could, the
+  // representation tables are unreadable as a whole (in practice: not
+  // created yet), so no carryover can exist and nothing is held.
+  async _prepareContinuity(adapter, streamedVideoIds) {
+    if (streamedVideoIds && streamedVideoIds.size === 0) {
+      return { held: new Set(), restoredYoutubeIds: [], carryovers: [] };
+    }
     try {
       return await watchContinuity.prepareServer(adapter);
     } catch (err) {
       if (err instanceof MediaServerUnavailableError) throw err;
-      logger.warn({ err, serverType: adapter.serverType }, 'Could not process carried-over watch state; not resetting any watch state this sync');
-      return { held: { has: () => true }, restoredYoutubeIds: [], carryovers: [] };
+      logger.warn({ err, serverType: adapter.serverType },
+        'Could not process carried-over watch state; not resetting the watch state of streamed videos this sync');
+      const held = streamedVideoIds
+        ? { has: (key) => streamedVideoIds.has(Number(String(key).split(':')[0])), delete: () => false }
+        : new Set();
+      return { held, restoredYoutubeIds: [], carryovers: [] };
     }
   }
 

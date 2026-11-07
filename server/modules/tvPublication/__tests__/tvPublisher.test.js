@@ -171,6 +171,16 @@ describe('tvPublisher', () => {
       expect(entries).toEqual([`${streamStem}.mp4`]);
     });
 
+    test('keeps the STRM entry when asked to, while its watch state is not recorded', async () => {
+      await publishStreamFixture();
+      const assets = await downloadFixture();
+      await tvPublisher.publish(plan(assets, {
+        layout: { parentDir: library, showFolderName: `Show [${CHANNEL}]`, existingStem: streamStem },
+      }), { keepStreamEntries: true });
+      const entries = (await fs.readdir(seasonDir())).filter((name) => /\.(mp4|strm)$/.test(name)).sort();
+      expect(entries).toEqual([`${streamStem}.mp4`, `${streamStem}.strm`]);
+    });
+
     test('a failed download publication leaves the STRM entry in place', async () => {
       await publishStreamFixture();
       const assets = await downloadFixture();

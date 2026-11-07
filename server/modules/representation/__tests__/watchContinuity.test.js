@@ -24,25 +24,45 @@ beforeEach(() => {
   Carryover.update.mockResolvedValue([1]);
 });
 
-describe('recordCarryovers', () => {
+describe('ensureCarryovers', () => {
+  beforeEach(() => {
+    Carryover.findAll.mockResolvedValue([]);
+  });
+
   test('snapshots every stored row that holds watch state', async () => {
     Video.findOne.mockResolvedValue({ id: 7 });
     VideoWatchStatus.findAll.mockResolvedValue([
       { server_type: 'jellyfin', server_user_id: 'u1', played: 1, play_count: 1, position_ms: 0 },
       { server_type: 'jellyfin', server_user_id: 'u2', played: 0, play_count: 0, position_ms: 0, percent_watched: null, last_watched_at: null },
     ]);
-    const count = await watchContinuity.recordCarryovers({ youtubeId: 'vid12345678', fromLocation: strm, toLocation: mp4 });
+    const count = await watchContinuity.ensureCarryovers({ youtubeId: 'vid12345678', fromLocation: strm, toLocation: mp4 });
     expect([count, Carryover.bulkCreate.mock.calls[0][0].map(r => [r.server_user_id, r.status, r.to_location])])
       .toEqual([1, [['u1', 'pending', mp4]]]);
   });
 
   test('records nothing when the location did not change', async () => {
-    expect(await watchContinuity.recordCarryovers({ youtubeId: 'vid12345678', fromLocation: mp4, toLocation: mp4 })).toBe(0);
+    expect(await watchContinuity.ensureCarryovers({ youtubeId: 'vid12345678', fromLocation: mp4, toLocation: mp4 })).toBe(0);
+  });
+
+  test('keeps a carryover already aimed at the new location, status and all', async () => {
+    Video.findOne.mockResolvedValue({ id: 7 });
+    VideoWatchStatus.findAll.mockResolvedValue([{ server_type: 'jellyfin', server_user_id: 'u1', played: 1, play_count: 1 }]);
+    Carryover.findAll.mockResolvedValue([{ server_type: 'jellyfin', server_user_id: 'u1', to_location: mp4 }]);
+    const count = await watchContinuity.ensureCarryovers({ youtubeId: 'vid12345678', fromLocation: strm, toLocation: mp4 });
+    expect([count, Carryover.bulkCreate.mock.calls.length]).toEqual([0, 0]);
+  });
+
+  test('replaces a carryover aimed at an earlier location', async () => {
+    Video.findOne.mockResolvedValue({ id: 7 });
+    VideoWatchStatus.findAll.mockResolvedValue([{ server_type: 'jellyfin', server_user_id: 'u1', played: 1, play_count: 1 }]);
+    Carryover.findAll.mockResolvedValue([{ server_type: 'jellyfin', server_user_id: 'u1', to_location: strm }]);
+    await watchContinuity.ensureCarryovers({ youtubeId: 'vid12345678', fromLocation: strm, toLocation: mp4 });
+    expect(Carryover.bulkCreate.mock.calls[0][0].map(r => [r.server_user_id, r.to_location])).toEqual([['u1', mp4]]);
   });
 
   test('records nothing for a video without a library row', async () => {
     Video.findOne.mockResolvedValue(null);
-    expect(await watchContinuity.recordCarryovers({ youtubeId: 'vid12345678', fromLocation: strm, toLocation: mp4 })).toBe(0);
+    expect(await watchContinuity.ensureCarryovers({ youtubeId: 'vid12345678', fromLocation: strm, toLocation: mp4 })).toBe(0);
   });
 });
 

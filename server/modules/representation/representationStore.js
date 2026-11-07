@@ -76,14 +76,21 @@ class RepresentationStore {
     return rows.map(toRepresentation);
   }
 
-  /** Map youtubeId -> location of every published STRM entry. */
-  async listPublishedStreamLocations() {
+  /**
+   * One query over every STRM record. `published`: youtubeId -> location of
+   * each published STRM entry. `youtubeIds`: every video that ever had a STRM
+   * entry; watch-state carryovers are only ever recorded for these videos.
+   * @returns {Promise<{published: Map<string, string>, youtubeIds: Set<string>}>}
+   */
+  async listStreamEntries() {
     const rows = await VideoRepresentation.findAll({
-      where: { kind: KINDS.STRM, state: STATES.PUBLISHED, location: { [Op.ne]: null } },
-      attributes: ['youtube_id', 'location'],
+      where: { kind: KINDS.STRM },
+      attributes: ['youtube_id', 'state', 'location'],
       raw: true,
     });
-    return new Map(rows.map(row => [row.youtube_id, row.location]));
+    const published = new Map(rows.filter(row => row.state === STATES.PUBLISHED && row.location)
+      .map(row => [row.youtube_id, row.location]));
+    return { published, youtubeIds: new Set(rows.map(row => row.youtube_id)) };
   }
 
   // INSERT IGNORE: a concurrent first caller may create the row too. Outside a
@@ -135,6 +142,28 @@ class RepresentationStore {
           'Another operation is changing this episode right now. Try again shortly.', head.lease);
       }
       await sleep(LEASE_POLL_MS);
+    }
+  }
+
+  /**
+   * Confirm the caller still owns the lease and extend it, right before a
+   * filesystem change: a holder that paused past its lease must not change
+   * files after another operation took the episode over.
+   * @throws {RepresentationLeaseError} code LEASE_LOST
+   */
+  async renewLease(lease) {
+    const ttl = LEASE_TTL_MS[lease.operation] || DEFAULT_LEASE_TTL_MS;
+    const now = new Date();
+    const [renewed] = await VideoRepresentationHead.update(
+      { lease_expires_at: new Date(now.getTime() + ttl), updated_at: now },
+      { where: { youtube_id: lease.youtubeId, lease_owner: lease.owner }, retry: SINGLE_ATTEMPT }
+    );
+    if (renewed === 1) return;
+    // mysql2 counts changed rows: a renewal within the same millisecond as
+    // the last one changes nothing, so confirm ownership directly.
+    const head = await VideoRepresentationHead.findByPk(lease.youtubeId, { retry: SINGLE_ATTEMPT });
+    if (!head || head.lease_owner !== lease.owner) {
+      throw new RepresentationLeaseError('LEASE_LOST', 'The publication lease was taken over by another operation.');
     }
   }
 
