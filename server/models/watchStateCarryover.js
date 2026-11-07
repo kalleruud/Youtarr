@@ -16,14 +16,14 @@ WatchStateCarryover.init({
   play_count: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   position_ms: { type: DataTypes.BIGINT, allowNull: true },
   percent_watched: { type: DataTypes.FLOAT, allowNull: true },
-  last_watched_at: { type: DataTypes.DATE, allowNull: true },
+  last_watched_at: { type: DataTypes.DATE(3), allowNull: true },
   from_location: { type: DataTypes.STRING(1024), allowNull: true },
   to_location: { type: DataTypes.STRING(1024), allowNull: false },
   status: { type: DataTypes.STRING(16), allowNull: false },
   attempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   last_error: { type: DataTypes.STRING(255), allowNull: true },
-  created_at: { type: DataTypes.DATE, allowNull: false },
-  updated_at: { type: DataTypes.DATE, allowNull: false },
+  created_at: { type: DataTypes.DATE(3), allowNull: false },
+  updated_at: { type: DataTypes.DATE(3), allowNull: false },
 }, { sequelize, tableName: 'watch_state_carryovers', timestamps: false });
 
 module.exports = WatchStateCarryover;

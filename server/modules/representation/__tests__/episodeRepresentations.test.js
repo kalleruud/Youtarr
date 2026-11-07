@@ -132,6 +132,16 @@ describe('stream -> download promotion', () => {
     expect(watchContinuity.recordCarryovers).toHaveBeenCalledWith({ youtubeId: ID, fromLocation: strmPath, toLocation: mediaPath });
   });
 
+  test('leaves the STRM published when its durable watch snapshot fails and repairs on retry', async () => {
+    await landDownload();
+    watchContinuity.recordCarryovers.mockRejectedValueOnce(new Error('snapshot unavailable'));
+    await expect(representations.promoteDownloadedAsset(ID, { location: mediaPath })).rejects.toThrow('snapshot unavailable');
+    expect(store.rows.map(r => [r.kind, r.state])).toEqual([['strm', 'published']]);
+    expect(await fs.pathExists(strmPath)).toBe(true);
+    await representations.promoteDownloadedAsset(ID, { location: mediaPath });
+    expect(await visibleEntries()).toEqual([`${stem}.mp4`]);
+  });
+
   test('is idempotent', async () => {
     await landDownload();
     await representations.promoteDownloadedAsset(ID, { location: mediaPath });

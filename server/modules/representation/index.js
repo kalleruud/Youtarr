@@ -237,20 +237,16 @@ class EpisodeRepresentations {
     }
     return this._withLease(youtubeId, LEASE_OPERATIONS.DOWNLOAD_PROMOTION, lease, async (activeLease) => {
       const before = this._visibleLocation((await this._resolve(youtubeId)).candidates);
+      // Persist the hold before retiring the old entry. A failed snapshot
+      // must leave it intact so a retry can safely take the snapshot.
+      const carryovers = before && before !== location
+        ? await watchContinuity.recordCarryovers({ youtubeId, fromLocation: before, toLocation: location })
+        : 0;
       const recorded = await store.record(activeLease, {
         kind: KINDS.LOCAL, state: STATES.VERIFIED, location, sizeBytes: check.sizeBytes, verified: true,
       });
       const reconciled = await this._reconcileUnderLease(activeLease, youtubeId);
-      let carryovers = 0;
-      let carryoverError = null;
-      if (before && before !== location) {
-        try {
-          carryovers = await watchContinuity.recordCarryovers({ youtubeId, fromLocation: before, toLocation: location });
-        } catch (err) {
-          carryoverError = err.message;
-          logger.error({ err, youtubeId }, 'Could not record watch state to carry over; stored watch state may be reset by the next sync');
-        }
-      }
+      const carryoverError = null;
       return { changed: recorded.changed, revision: recorded.revision, retiredStream: reconciled.retired > 0,
         removedStreamEntries: reconciled.removed, carryovers, carryoverError };
     }, { waitMs: PROMOTION_LEASE_WAIT_MS });

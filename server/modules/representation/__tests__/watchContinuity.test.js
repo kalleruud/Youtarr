@@ -47,11 +47,22 @@ describe('recordCarryovers', () => {
 });
 
 describe('prepareServer', () => {
-  test('restores pending state and stops holding the row', async () => {
+  test('holds restored state until the listing confirms it', async () => {
     Carryover.findAll.mockResolvedValue([carryover()]);
     const restore = jest.fn().mockResolvedValue(new Map([['1', { status: 'restored' }]]));
     const prepared = await watchContinuity.prepareServer(adapter(restore));
-    expect([prepared.held.size, prepared.restoredYoutubeIds, statusWrites()]).toEqual([0, ['vid12345678'], ['restored']]);
+    expect([prepared.held.size, prepared.restoredYoutubeIds, statusWrites()]).toEqual([1, ['vid12345678'], ['restored']]);
+  });
+
+  test('keeps a restored row held across a stale listing and later settles it', async () => {
+    Carryover.findAll.mockResolvedValue([carryover({ status: 'restored' })]);
+    const restore = jest.fn();
+    const prepared = await watchContinuity.prepareServer(adapter(restore));
+    await watchContinuity.settleListed(prepared, []);
+    expect([...prepared.held]).toEqual(['7:u1']);
+    expect(restore).not.toHaveBeenCalled();
+    await watchContinuity.settleListed(prepared, [{ video: { id: 7 }, entry: { serverUserId: 'u1', path: mp4 } }]);
+    expect(prepared.held.size).toBe(0);
   });
 
   test('passes the stored state to the adapter', async () => {
@@ -77,7 +88,7 @@ describe('prepareServer', () => {
   test('lets the user state on the new item win', async () => {
     Carryover.findAll.mockResolvedValue([carryover()]);
     const prepared = await watchContinuity.prepareServer(adapter(jest.fn().mockResolvedValue(new Map([['1', { status: 'superseded' }]]))));
-    expect([statusWrites(), prepared.held.size]).toEqual([['superseded'], 0]);
+    expect([statusWrites(), prepared.held.size]).toEqual([['restored'], 1]);
   });
 
   test('keeps the stored state for a server that cannot restore it', async () => {

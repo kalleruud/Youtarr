@@ -28,7 +28,7 @@ const CARRYOVER_STATUSES = Object.freeze({
 });
 // Statuses whose stored rows the sync must not reset.
 const HOLDING_STATUSES = Object.freeze([
-  CARRYOVER_STATUSES.PENDING, CARRYOVER_STATUSES.UNSUPPORTED, CARRYOVER_STATUSES.FAILED,
+  CARRYOVER_STATUSES.PENDING, CARRYOVER_STATUSES.RESTORED, CARRYOVER_STATUSES.UNSUPPORTED, CARRYOVER_STATUSES.FAILED,
 ]);
 // About a week at the default 4-hour sync: long enough for a slow library scan.
 const MAX_RESTORE_ATTEMPTS = 42;
@@ -176,7 +176,7 @@ class WatchContinuity {
         await this._setStatus(row, CARRYOVER_STATUSES.RESTORED);
         restoredYoutubeIds.add(row.youtube_id);
       } else if (result.status === 'superseded') {
-        await this._setStatus(row, CARRYOVER_STATUSES.SUPERSEDED);
+        await this._setStatus(row, CARRYOVER_STATUSES.RESTORED);
       } else if (result.status === 'not-found') {
         await this._failedAttempt(row, 'the media server has not scanned the new file yet');
       } else {

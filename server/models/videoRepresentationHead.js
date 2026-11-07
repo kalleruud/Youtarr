@@ -11,8 +11,8 @@ VideoRepresentationHead.init({
   selected_representation_id: { type: DataTypes.INTEGER, allowNull: true },
   lease_owner: { type: DataTypes.STRING(64), allowNull: true },
   lease_operation: { type: DataTypes.STRING(32), allowNull: true },
-  lease_expires_at: { type: DataTypes.DATE, allowNull: true },
-  updated_at: { type: DataTypes.DATE, allowNull: false },
+  lease_expires_at: { type: DataTypes.DATE(3), allowNull: true },
+  updated_at: { type: DataTypes.DATE(3), allowNull: false },
 }, { sequelize, tableName: 'video_representation_heads', timestamps: false });
 
 module.exports = VideoRepresentationHead;

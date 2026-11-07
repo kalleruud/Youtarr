@@ -16,9 +16,9 @@ VideoRepresentation.init({
   size_bytes: { type: DataTypes.BIGINT, allowNull: true },
   revision: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
   detail: { type: DataTypes.STRING(255), allowNull: true },
-  verified_at: { type: DataTypes.DATE, allowNull: true },
-  created_at: { type: DataTypes.DATE, allowNull: false },
-  updated_at: { type: DataTypes.DATE, allowNull: false },
+  verified_at: { type: DataTypes.DATE(3), allowNull: true },
+  created_at: { type: DataTypes.DATE(3), allowNull: false },
+  updated_at: { type: DataTypes.DATE(3), allowNull: false },
 }, { sequelize, tableName: 'video_representations', timestamps: false });
 
 module.exports = VideoRepresentation;
