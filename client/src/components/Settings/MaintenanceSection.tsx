@@ -1,3 +1,4 @@
+import { SubtitleRepairPanel } from './SubtitleRepairPanel';
 import { ScheduleSummary } from '../Configuration/sections/components/ScheduleSummary';
 import { ConfigState } from '../Configuration/types';
 import React, { useEffect } from 'react';
@@ -55,6 +56,7 @@ export function MaintenanceSection({ token, config }: MaintenanceSectionProps) {
 
   return (
     <div className="flex flex-col gap-6">
+    <SubtitleRepairPanel token={token} />
     <ConfigurationCard title="Rescan files on disk">
       <div className="flex flex-col gap-4">
         <Typography variant="body2" color="text.secondary">

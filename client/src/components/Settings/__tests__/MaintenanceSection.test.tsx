@@ -1,3 +1,4 @@
+jest.mock('../SubtitleRepairPanel', () => ({ SubtitleRepairPanel: () => null }));
 import { renderWithProviders } from '../../../test-utils';
 import { DEFAULT_CONFIG } from '../../../config/configSchema';
 import React from 'react';

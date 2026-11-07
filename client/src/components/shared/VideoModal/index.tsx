@@ -1,3 +1,4 @@
+import { SubtitleRepairPanel } from '../../Settings/SubtitleRepairPanel';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import {
@@ -289,6 +290,7 @@ function VideoModal({
               loading={metadataLoading}
               onAddChannel={canAddChannel ? () => setAddChannelOpen(true) : undefined}
             />
+            {open && localVideo.isDownloaded && video.databaseId && <SubtitleRepairPanel token={token} videoId={video.databaseId} />}
             <EpisodeIdentity youtubeId={open ? video.youtubeId : ''} token={token} />
             <VideoWatchStatusSection statuses={watchStatuses} />
             <VideoTechnical
