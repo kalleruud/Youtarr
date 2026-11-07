@@ -157,9 +157,10 @@ describe('startDownloadAll', () => {
   it('queues a specific-downloads job with watch URLs, channel id, and job label', async () => {
     ChannelVideo.findAll.mockResolvedValue([cv('a'), cv('b')]);
 
+    const preview = await channelDownloadAllModule.getPreview(CHANNEL_ID, 'videos');
     const result = await channelDownloadAllModule.startDownloadAll(CHANNEL_ID, 'videos', {
       resolution: '720',
-    });
+    }, preview.selectionVersion);
 
     expect(result).toEqual({ queued: 2 });
     expect(downloadModule.doSpecificDownloads).toHaveBeenCalledWith({

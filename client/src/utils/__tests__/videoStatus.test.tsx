@@ -26,6 +26,9 @@ describe('videoStatus Utility', () => {
   test('reports unavailable source without hiding an existing download', () => {
     const video = { title: 'Unavailable', youtube_id: 'abcdefghijk', publishedAt: null, thumbnail: '', added: false, duration: 0, youtube_removed: true };
     expect(getVideoStatus(video)).toBe('unavailable');
+    expect(getVideoStatus({ ...video, ignored: true })).toBe('ignored');
+    expect(getStatusColor('unavailable')).toBe('default');
+    expect(getStatusIcon('unavailable').type).toBe(CloudOffIcon);
     expect(getVideoStatus({ ...video, added: true })).toBe('downloaded');
   });
   // Base mock video for testing

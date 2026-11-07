@@ -1126,6 +1126,29 @@ module.exports = function createChannelRoutes({ verifyToken, channelModule, arch
    *             schema:
    *               type: object
    *               properties:
+   *                 selectionVersion:
+   *                   type: string
+   *                   description: Opaque version required when confirming this selection.
+   *                 plannedAction:
+   *                   type: string
+   *                   enum: [download]
+   *                 knownSizeBytes:
+   *                   type: integer
+   *                 unknownSizeCount:
+   *                   type: integer
+   *                 selection:
+   *                   type: array
+   *                   items:
+   *                     type: object
+   *                     properties:
+   *                       youtubeId:
+   *                         type: string
+   *                       action:
+   *                         type: string
+   *                         enum: [download]
+   *                       estimatedSizeBytes:
+   *                         type: integer
+   *                         nullable: true
    *                 count:
    *                   type: integer
    *                 totalDurationSeconds:

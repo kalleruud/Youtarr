@@ -63,6 +63,7 @@ export function useChannelDownloadAll(
     async (tabType: string): Promise<DownloadAllPreview | null> => {
       if (!channelId || !token) return null;
 
+      setPreview(null);
       setPreviewLoading(true);
       setError(null);
       try {
@@ -99,6 +100,7 @@ export function useChannelDownloadAll(
         );
         return res.data.queued;
       } catch (err: unknown) {
+        setPreview(null);
         setError(extractMessage(err, 'Failed to start the download'));
         return null;
       } finally {

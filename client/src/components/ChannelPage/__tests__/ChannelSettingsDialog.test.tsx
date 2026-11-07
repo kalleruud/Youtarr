@@ -1,4 +1,5 @@
 import React from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
@@ -7,6 +8,9 @@ import { useConfig } from '../../../hooks/useConfig';
 import { DEFAULT_CONFIG } from '../../../config/configSchema';
 
 // Mock the useConfig hook
+let mockMobile = false;
+jest.mock('../../../hooks/useMediaQuery', () => ({ __esModule: true, default: () => mockMobile }));
+
 const mockRefetchConfig = jest.fn();
 
 jest.mock('../../../hooks/useConfig', () => ({
@@ -18,6 +22,8 @@ jest.mock('../../../hooks/useConfig', () => ({
 // mock is passive for them; it's only exercised by the refresh-path test.
 jest.mock('axios', () => ({
   post: jest.fn(),
+  get: jest.fn(),
+  put: jest.fn(),
   isAxiosError: jest.fn(() => false),
 }));
 
@@ -101,6 +107,7 @@ describe('ChannelSettingsDialog', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockMobile = false;
     mockFetch = jest.fn();
     global.fetch = mockFetch;
     mockAxios.post.mockReset();
@@ -118,6 +125,21 @@ describe('ChannelSettingsDialog', () => {
 
   afterEach(() => {
     // Cleanup
+  });
+
+  test.each([false, true])('Strategy section loads and saves on mobile=%s', async mobile => {
+    mockMobile = mobile;
+    mockFetch.mockResolvedValue({ ok: true, json: jest.fn().mockResolvedValue(mockChannelSettings) });
+    const policy = { explicit: { delivery: null, live: null }, revision: 3, note: 'Existing downloads are kept.' };
+    mockAxios.get.mockResolvedValue({ data: policy });
+    mockAxios.put.mockResolvedValue({ data: policy });
+    const user = userEvent.setup();
+    render(<MemoryRouter><ChannelSettingsDialog {...defaultProps} /></MemoryRouter>);
+    await user.click(await screen.findByRole(mobile ? 'tab' : 'button', { name: 'Strategy' }));
+    await user.click(await screen.findByRole('button', { name: 'Save strategy' }));
+    await waitFor(() => expect(mockAxios.put).toHaveBeenCalledWith('/api/channels/channel123/acquisition-policy',
+      { delivery: null, live: null, expectedRevision: 3 }, expect.any(Object)));
+    expect(screen.getByRole('link', { name: /Open Downloads/ })).toHaveAttribute('href', '/downloads');
   });
 
   describe('Component Rendering', () => {
