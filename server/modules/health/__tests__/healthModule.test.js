@@ -14,7 +14,7 @@ jest.mock('../outcomeStore', () => ({
   record: jest.fn(async (o) => o), getForVideo: jest.fn(async () => []), getStageForVideos: jest.fn(async () => new Map()),
   claimRetry: jest.fn(), getOne: jest.fn(), list: jest.fn(),
 }));
-jest.mock('../libraryRefresh', () => ({ enqueue: jest.fn(async () => {}) }));
+jest.mock('../libraryRefresh', () => ({ canAccept: jest.fn(() => true), enqueue: jest.fn(async () => {}) }));
 jest.mock('../healthNotifier', () => ({ report: jest.fn(), reportAbandoned: jest.fn() }));
 jest.mock('../healthSummary', () => ({ build: jest.fn() }));
 
@@ -120,6 +120,13 @@ describe('retryStep', () => {
     await retry({ stage: 'library' });
     expect(libraryRefresh.enqueue).toHaveBeenCalledWith([ID]);
     expect(downloadModule.doSpecificDownloads).not.toHaveBeenCalled();
+  });
+
+  test('capacity lost after claiming releases only that library retry generation', async () => {
+    outcomeStore.claimRetry.mockResolvedValue({ stage: 'library', revision: 5 });
+    libraryRefresh.enqueue.mockImplementationOnce(() => Object.assign(Promise.resolve(), { accepted: false }));
+    await expect(retry({ stage: 'library' })).rejects.toMatchObject({ status: 503, code: 'refresh-capacity' });
+    expect(outcomeStore.record).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 5, reasonCode: 'refresh-deferred' }));
   });
 
   test('captions cannot be retried on their own', async () => {

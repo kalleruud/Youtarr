@@ -1,7 +1,7 @@
 jest.mock('../../../logger', () => ({ warn: jest.fn(), error: jest.fn(), info: jest.fn(), debug: jest.fn() }));
 jest.mock('../../configModule', () => ({ getConfig: jest.fn(() => ({})) }));
 jest.mock('../../mediaServers/serverRegistry', () => ({ getEnabledAdapters: jest.fn(() => []) }));
-jest.mock('../outcomeStore', () => ({ getStageForVideos: jest.fn(), record: jest.fn() }));
+jest.mock('../outcomeStore', () => ({ getStageForVideos: jest.fn(), record: jest.fn(), renewRetry: jest.fn().mockResolvedValue(true) }));
 
 const configModule = require('../../configModule');
 const serverRegistry = require('../../mediaServers/serverRegistry');
@@ -88,4 +88,95 @@ test('videos without a pending library outcome are left alone', async () => {
 test('a failing batch never rejects', async () => {
   outcomeStore.getStageForVideos.mockRejectedValue(new Error('db down'));
   await expect(refresh().enqueue(['aaaaaaaaaaa'])).resolves.toBeUndefined();
+});
+
+test('admission coalesces duplicates and bounds retained videos behind sleeping work', async () => {
+  let release;
+  const asleep = new Promise((resolve) => { release = resolve; });
+  outcomeStore.getStageForVideos.mockImplementation(async (ids) => new Map(ids.map((id) => [id, pending(id, 'ep1.mp4')])));
+  const adapter = adapterWith([]);
+  adapter.checkShowPublication.mockResolvedValue({ status: 'show-not-found' });
+  const worker = new LibraryRefresh({ sleep: () => asleep, delays: [0, 1] });
+  const first = worker.enqueue(['aaaaaaaaaaa']);
+  const duplicate = worker.enqueue(['aaaaaaaaaaa']);
+  await Promise.resolve();
+  expect(outcomeStore.getStageForVideos).toHaveBeenCalledTimes(1);
+  const extra = worker.enqueue(Array.from({ length: 300 }, (_, i) => String(i).padStart(11, '0')));
+  expect(worker.videos.size).toBe(200);
+  expect(worker.canAccept('zzzzzzzzzzz')).toBe(false);
+  release();
+  await Promise.all([first, duplicate, extra]);
+  expect(worker.videos.size).toBe(0);
+});
+
+test('a delayed show does not block a different show', async () => {
+  let release;
+  const asleep = new Promise((resolve) => { release = resolve; });
+  const second = pending('bbbbbbbbbbb', 'ep2.mp4');
+  second.details.showDir = '/data/Other';
+  outcomeStore.getStageForVideos.mockResolvedValue(new Map([
+    ['aaaaaaaaaaa', pending('aaaaaaaaaaa', 'ep1.mp4')], ['bbbbbbbbbbb', second],
+  ]));
+  const adapter = adapterWith([]);
+  adapter.checkShowPublication.mockImplementation(async (show) => show === '/data/Other'
+    ? { status: 'listed', files: new Set(['ep2.mp4']) } : { status: 'show-not-found' });
+  const worker = new LibraryRefresh({ sleep: () => asleep, delays: [0, 1] });
+  const run = worker.enqueue(['aaaaaaaaaaa', 'bbbbbbbbbbb']);
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  expect(recorded()).toContainEqual(['bbbbbbbbbbb', 'ok', 'ok', 'listed-in-jellyfin']);
+  release();
+  await run;
+});
+
+test('settlement carries the generation admitted by the worker', async () => {
+  const item = { ...pending('aaaaaaaaaaa', 'ep1.mp4'), revision: 6, reasonCode: 'retry-requested' };
+  outcomeStore.getStageForVideos.mockResolvedValue(new Map([[item.youtubeId, item]]));
+  adapterWith([{ status: 'listed', files: new Set(['ep1.mp4']) }]);
+  await refresh().enqueue([item.youtubeId]);
+  expect(outcomeStore.record).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 6 }));
+});
+
+test('an active retry renews ownership during delayed checks and stops after completion', async () => {
+  jest.useFakeTimers();
+  let release;
+  const asleep = new Promise((resolve) => { release = resolve; });
+  const item = { ...pending('aaaaaaaaaaa', 'ep1.mp4'), revision: 6, reasonCode: 'retry-requested' };
+  outcomeStore.getStageForVideos.mockResolvedValue(new Map([[item.youtubeId, item]]));
+  const adapter = adapterWith([]);
+  adapter.checkShowPublication.mockResolvedValue({ status: 'show-not-found' });
+  const worker = new LibraryRefresh({ sleep: () => asleep, delays: [0, 1] });
+  try {
+    const run = worker.enqueue([item.youtubeId]);
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(11 * 60 * 1000);
+    expect(outcomeStore.renewRetry).toHaveBeenCalledWith(item.youtubeId, 'library', 6);
+    release();
+    await run;
+    const calls = outcomeStore.renewRetry.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(60 * 1000);
+    expect(outcomeStore.renewRetry).toHaveBeenCalledTimes(calls);
+  } finally {
+    release();
+    jest.useRealTimers();
+  }
+});
+
+test('show capacity overflow is explicitly deferred without another Jellyfin request', async () => {
+  let release;
+  const asleep = new Promise((resolve) => { release = resolve; });
+  const items = Array.from({ length: 26 }, (_, i) => {
+    const item = pending(String(i).padStart(11, '0'), 'ep.mp4');
+    item.details.showDir = `/data/Show${i}`;
+    return item;
+  });
+  outcomeStore.getStageForVideos.mockResolvedValue(new Map(items.map((item) => [item.youtubeId, item])));
+  const adapter = adapterWith([]);
+  adapter.checkShowPublication.mockResolvedValue({ status: 'show-not-found' });
+  const worker = new LibraryRefresh({ sleep: () => asleep, delays: [0, 1] });
+  const run = worker.enqueue(items.map((item) => item.youtubeId));
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  expect(adapter.checkShowPublication).toHaveBeenCalledTimes(25);
+  expect(recorded()).toContainEqual([items[25].youtubeId, 'pending', 'scan-pending', 'refresh-deferred']);
+  release();
+  await run;
 });

@@ -315,3 +315,5 @@ When a code change creates or invalidates information in this file or in `docs/`
 
 ### CI/CD
 When debugging CI/CD or GitHub Actions issues, check both the permissions AND the actual command execution logs. A fix is not complete until the underlying behavior is verified working.
+
+Targeted library refresh admission retains at most 200 distinct videos and coalesces duplicate video requests. Up to 25 shows check independently; delayed rechecks do not serialize unrelated shows. Busy shows and show-capacity overflow become retryable `refresh-deferred` outcomes. Video-capacity overflow stays pending; explicit health retries receive 503 with a retry-later hint before claiming. Active library retries renew their ten-minute lease every minute; workers settle only their admitted revision. Store writes use revision CAS with bounded conflict retries, including concurrent first inserts; unowned library writes cannot erase a retry claim. These checks never scan a full library or change download outcomes.

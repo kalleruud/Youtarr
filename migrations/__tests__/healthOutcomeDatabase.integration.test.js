@@ -72,3 +72,39 @@ test('problem counts and listing exclude resolved outcomes', async () => {
   const { outcomes } = await store.list({ limit: 10 });
   expect(outcomes.every((o) => o.status !== 'ok')).toBe(true);
 });
+
+test('concurrent missing-row inserts retain every successful revision', async () => {
+  const input = { youtubeId: 'concurrent1', stage: 'library', status: 'failed', category: 'application-failure', retryable: true };
+  const results = await Promise.all(Array.from({ length: 5 }, () => store.record(input)));
+  expect(results.every(Boolean)).toBe(true);
+  expect(await store.getOne(input.youtubeId, input.stage)).toMatchObject({ revision: 5, attempts: 5 });
+});
+
+test('a paused record cannot roll back a concurrent retry claim', async () => {
+  const model = require('../../server/models/healthOutcome');
+  const input = { youtubeId: 'concurrent2', stage: 'library', status: 'failed', category: 'application-failure', retryable: true };
+  await store.record(input);
+  const original = model.update.bind(model);
+  let release;
+  let entered;
+  const paused = new Promise((resolve) => { entered = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  const spy = jest.spyOn(model, 'update').mockImplementationOnce(async (...args) => {
+    entered();
+    await gate;
+    return original(...args);
+  });
+  try {
+    const delayed = store.record(input);
+    await paused;
+    const claim = await store.claimRetry({ ...input, expectedRevision: 1 });
+    release();
+    expect(await delayed).toBeNull();
+    expect(await store.getOne(input.youtubeId, input.stage)).toMatchObject({ revision: claim.revision, reasonCode: 'retry-requested' });
+    expect(await store.record({ ...input, expectedRevision: 1 })).toBeNull();
+    expect(await store.record({ ...input, expectedRevision: claim.revision })).toMatchObject({ revision: 3 });
+  } finally {
+    release();
+    spy.mockRestore();
+  }
+});

@@ -14,9 +14,10 @@ const { STAGES, STATUSES, CATEGORIES } = require('./constants');
 
 // One check right away, then re-checks while Jellyfin's refresh runs.
 const CHECK_DELAYS_MS = Object.freeze([0, 30 * 1000, 2 * 60 * 1000, 5 * 60 * 1000]);
-// At most this many shows are worked through per completed job; the rest stay
-// pending and can be retried from the health view.
+// At most this many shows run concurrently; overflow is explicitly deferred
+// and can be retried from the health view.
 const MAX_SHOWS_PER_BATCH = 25;
+const MAX_PENDING_VIDEOS = 200;
 
 function defaultSleep(ms) {
   return new Promise((resolve) => {
@@ -29,8 +30,8 @@ class LibraryRefresh {
   constructor({ sleep = defaultSleep, delays = CHECK_DELAYS_MS } = {}) {
     this.sleep = sleep;
     this.delays = delays;
-    this.queue = Promise.resolve();
-    this.inFlightShows = new Set();
+    this.videos = new Map();
+    this.inFlightShows = new Map();
   }
 
   isEnabled(config = configModule.getConfig() || {}) {
@@ -44,14 +45,45 @@ class LibraryRefresh {
 
   /**
    * Queue checks for the given videos' pending library outcomes. Runs one
-   * batch at a time; resolves when this batch is done. Never rejects.
+   * bounded concurrent shows; resolves when admitted work is done. Never rejects.
    */
+  canAccept(youtubeId) {
+    return this.videos.has(youtubeId) || this.videos.size < MAX_PENDING_VIDEOS;
+  }
+
   enqueue(youtubeIds) {
-    const run = this.queue.then(() => this._runBatch(youtubeIds));
-    this.queue = run.catch(() => {});
-    return run.catch((err) => {
-      logger.error({ err }, 'Library refresh batch failed');
-    });
+    const waits = [];
+    const admitted = [];
+    let refused = false;
+    for (const id of new Set(youtubeIds)) {
+      if (this.videos.has(id)) {
+        waits.push(this.videos.get(id).promise);
+      } else if (this.videos.size < MAX_PENDING_VIDEOS) {
+        let resolve;
+        const promise = new Promise((done) => { resolve = done; });
+        this.videos.set(id, { promise, resolve });
+        admitted.push(id);
+        waits.push(promise);
+      } else {
+        refused = true;
+      }
+    }
+    if (admitted.length < new Set(youtubeIds).size) {
+      logger.warn({ limit: MAX_PENDING_VIDEOS }, 'Library refresh admission coalesced or full; pending videos can be retried from Acquisition Health');
+    }
+    if (admitted.length) {
+      this._runBatch(admitted).catch((err) => {
+        logger.error({ err }, 'Library refresh batch failed');
+      }).finally(() => {
+        for (const id of admitted) {
+          this.videos.get(id).resolve();
+          this.videos.delete(id);
+        }
+      });
+    }
+    const completion = Promise.all(waits).then(() => undefined);
+    completion.accepted = !refused;
+    return completion;
   }
 
   async _runBatch(youtubeIds) {
@@ -77,19 +109,31 @@ class LibraryRefresh {
       list.push(item);
       byShow.set(item.details.showDir, list);
     }
-    const shows = [...byShow.entries()];
-    for (const [showDir, items] of shows.slice(0, MAX_SHOWS_PER_BATCH)) {
-      if (this.inFlightShows.has(showDir)) continue;
-      this.inFlightShows.add(showDir);
+    await Promise.all([...byShow.entries()].map(async ([showDir, items]) => {
+      // A show already being checked or beyond the concurrency bound is
+      // explicitly deferred, never chained behind minutes of delayed checks.
+      if (this.inFlightShows.has(showDir) || this.inFlightShows.size >= MAX_SHOWS_PER_BATCH) {
+        for (const item of items) {
+          await this._record(item, STATUSES.PENDING, CATEGORIES.SCAN_PENDING, 'refresh-deferred',
+            'Targeted refresh capacity is busy. Jellyfin monitoring can still add this episode; retry the library step from Acquisition Health.', true);
+        }
+        return;
+      }
+      this.inFlightShows.set(showDir, true);
+      const heartbeat = setInterval(() => {
+        for (const item of items.filter((entry) => entry.reasonCode === 'retry-requested')) {
+          outcomeStore.renewRetry(item.youtubeId, STAGES.LIBRARY, item.revision)
+            .catch((err) => logger.warn({ err }, 'Library retry renewal failed'));
+        }
+      }, 60 * 1000);
+      heartbeat.unref?.();
       try {
         await this._refreshShow(adapter, showDir, items);
       } finally {
+        clearInterval(heartbeat);
         this.inFlightShows.delete(showDir);
       }
-    }
-    if (shows.length > MAX_SHOWS_PER_BATCH) {
-      logger.warn({ shows: shows.length, limit: MAX_SHOWS_PER_BATCH }, 'Library refresh limited to the first shows of this batch');
-    }
+    }));
   }
 
   async _refreshShow(adapter, showDir, items) {
@@ -141,6 +185,7 @@ class LibraryRefresh {
   _record(item, status, category, reasonCode, message, retryable) {
     return outcomeStore.record({
       youtubeId: item.youtubeId,
+      expectedRevision: item.revision,
       stage: STAGES.LIBRARY,
       status,
       category,

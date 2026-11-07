@@ -72,26 +72,23 @@ class OutcomeStore {
       logger.warn({ problem, stage: input && input.stage }, 'Health outcome not recorded');
       return null;
     }
-    try {
-      return await this._upsert(input);
-    } catch (err) {
-      if (err && err.name === 'SequelizeUniqueConstraintError') {
-        // A concurrent writer created the row first; write over it once.
-        try {
-          return await this._upsert(input);
-        } catch (retryErr) {
-          logger.warn({ err: retryErr, youtubeId: input.youtubeId, stage: input.stage }, 'Health outcome not recorded');
-          return null;
-        }
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        const result = await this._upsert({ ...input, conflictRetry: attempt > 0 });
+        if (result !== undefined) return result;
+      } catch (err) {
+        if (err && err.name === 'SequelizeUniqueConstraintError') continue;
+        logger.warn({ err, youtubeId: input.youtubeId, stage: input.stage }, 'Health outcome not recorded');
+        return null;
       }
-      logger.warn({ err, youtubeId: input.youtubeId, stage: input.stage }, 'Health outcome not recorded');
-      return null;
     }
+    logger.warn({ youtubeId: input.youtubeId, stage: input.stage }, 'Health outcome write contention; retry later');
+    return null;
   }
 
   async _upsert({
     youtubeId, stage, status, category, reasonCode = null, message = null,
-    retryable = false, jobId = null, policyRevision = null, details = null,
+    retryable = false, jobId = null, policyRevision = null, details = null, expectedRevision, conflictRetry = false,
   }) {
     const config = currentConfig();
     const { appVersion, toolVersion } = getVersions();
@@ -111,19 +108,36 @@ class OutcomeStore {
     };
     const existing = await HealthOutcome.findOne({ where: { youtube_id: youtubeId, stage } });
     if (!existing) {
+      if (expectedRevision !== undefined) return null;
       const created = await HealthOutcome.create({
         ...values, youtube_id: youtubeId, stage, attempts: status === STATUSES.OK ? 0 : 1, revision: 1, created_at: now,
       });
       return serialize(created);
     }
+    if (expectedRevision !== undefined && existing.revision !== expectedRevision) return null;
+    // Library workers must carry their admission generation, including across
+    // processes. An unrelated publication cannot release an active retry.
+    if ((stage === 'library' || conflictRetry) && existing.reason_code === 'retry-requested'
+      && expectedRevision === undefined) return null;
     // attempts counts consecutive unsuccessful results; success resets it.
     const unsuccessful = status === STATUSES.FAILED || status === STATUSES.WARNING;
     const wasUnsuccessful = existing.status === STATUSES.FAILED || existing.status === STATUSES.WARNING
       || (existing.status === STATUSES.PENDING && existing.reason_code === 'retry-requested');
     values.attempts = unsuccessful ? (wasUnsuccessful ? existing.attempts + 1 : 1) : 0;
     values.revision = existing.revision + 1;
-    await existing.update(values);
-    return serialize(existing);
+    const [affected] = await HealthOutcome.update(values, {
+      where: { youtube_id: youtubeId, stage, revision: existing.revision },
+    });
+    if (affected !== 1) return undefined; // Re-read after a competing write/claim.
+    return serialize({ ...existing.get({ plain: true }), ...values });
+  }
+
+  // Extend only the exact retry generation currently owned by a worker.
+  async renewRetry(youtubeId, stage, revision) {
+    const [affected] = await HealthOutcome.update({ updated_at: new Date() }, {
+      where: { youtube_id: youtubeId, stage, revision, reason_code: 'retry-requested' },
+    });
+    return affected === 1;
   }
 
   /** Every recorded stage of one video, in pipeline order. */
@@ -201,7 +215,8 @@ class OutcomeStore {
       },
     });
     if (affected !== 1) return null;
-    return this.getOne(youtubeId, stage);
+    const claimed = await this.getOne(youtubeId, stage);
+    return claimed && claimed.revision === expectedRevision + 1 ? claimed : null;
   }
 }
 

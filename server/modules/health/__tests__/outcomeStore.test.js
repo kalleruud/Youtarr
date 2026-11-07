@@ -17,12 +17,13 @@ const base = { youtubeId: 'abcdefghijk', stage: 'captions', status: 'warning', c
 
 function existingRow(values) {
   const row = { ...values, update: jest.fn(async (changes) => Object.assign(row, changes)) };
-  row.get = () => row;
+  row.get = () => ({ ...row, get: undefined, update: undefined });
   return row;
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
+  HealthOutcome.update.mockResolvedValue([1]);
   HealthOutcome.create.mockImplementation(async (values) => ({ ...values }));
 });
 
@@ -81,4 +82,25 @@ test('claimRetry returns the claimed outcome', async () => {
 test('getForVideo lists stages in pipeline order', async () => {
   HealthOutcome.findAll.mockResolvedValue(['library', 'acquisition', 'captions'].map((stage) => existingRow({ stage })));
   expect((await store.getForVideo(base.youtubeId)).map((o) => o.stage)).toEqual(['acquisition', 'captions', 'library']);
+});
+
+test('a delayed write re-reads after a claim and cannot erase its ownership', async () => {
+  HealthOutcome.findOne.mockResolvedValueOnce(existingRow({ revision: 4, status: 'warning', attempts: 1 }))
+    .mockResolvedValueOnce(existingRow({ revision: 6, status: 'pending', reason_code: 'retry-requested' }));
+  HealthOutcome.update.mockResolvedValueOnce([0]);
+  await expect(store.record({ ...base, stage: 'library' })).resolves.toBeNull();
+  expect(HealthOutcome.update).toHaveBeenCalledTimes(1);
+});
+
+test('stale asynchronous settlement cannot overwrite a newer generation', async () => {
+  HealthOutcome.findOne.mockResolvedValue(existingRow({ revision: 7 }));
+  await expect(store.record({ ...base, expectedRevision: 6 })).resolves.toBeNull();
+  expect(HealthOutcome.update).not.toHaveBeenCalled();
+});
+
+test('a conflicting acquisition writer also preserves a newly claimed retry', async () => {
+  HealthOutcome.findOne.mockResolvedValueOnce(existingRow({ revision: 4, status: 'warning', attempts: 1 }))
+    .mockResolvedValueOnce(existingRow({ revision: 6, status: 'pending', reason_code: 'retry-requested' }));
+  HealthOutcome.update.mockResolvedValueOnce([0]);
+  await expect(store.record({ ...base, stage: 'acquisition' })).resolves.toBeNull();
 });

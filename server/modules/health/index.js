@@ -183,6 +183,9 @@ class HealthModule {
 
     if (stage === STAGES.ACQUISITION) await this._assertAcquisitionRetryAllowed(youtubeId);
 
+    if (stage === STAGES.LIBRARY && !libraryRefresh.canAccept(youtubeId)) {
+      throw new HealthError(503, 'refresh-capacity', 'Targeted refresh capacity is full; retry the library step later.');
+    }
     const claimed = await outcomeStore.claimRetry({ youtubeId, stage, expectedRevision: revision });
     if (!claimed) {
       throw new HealthError(409, 'stale-or-duplicate',
@@ -190,7 +193,17 @@ class HealthModule {
     }
 
     if (stage === STAGES.LIBRARY) {
-      libraryRefresh.enqueue([youtubeId]).catch(() => {});
+      const completion = libraryRefresh.enqueue([youtubeId]);
+      if (completion.accepted === false) {
+        await outcomeStore.record({
+          youtubeId, stage, expectedRevision: claimed.revision,
+          status: STATUSES.PENDING, category: CATEGORIES.SCAN_PENDING,
+          reasonCode: 'refresh-deferred', retryable: true, details: claimed.details,
+          message: 'Targeted refresh capacity is full; retry the library step later.',
+        });
+        throw new HealthError(503, 'refresh-capacity', 'Targeted refresh capacity is full; retry the library step later.');
+      }
+      completion.catch(() => {});
       return { outcome: claimed, queued: true };
     }
 
@@ -202,7 +215,7 @@ class HealthModule {
       }
     } catch (err) {
       await outcomeStore.record({
-        youtubeId, stage, status: STATUSES.FAILED, category: claimed.category, reasonCode: 'retry-not-queued',
+        youtubeId, stage, expectedRevision: claimed.revision, status: STATUSES.FAILED, category: claimed.category, reasonCode: 'retry-not-queued',
         message: `The retry could not be queued: ${err.message}`, retryable: true, details: claimed.details,
       });
       if (err instanceof HealthError) throw err;
