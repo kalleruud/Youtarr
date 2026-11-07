@@ -154,6 +154,11 @@ class TempPathManager {
       const failures = [];
       for (const entry of entries) {
         const entryPath = path.join(tempBase, entry);
+        const playbackRoot = path.resolve(require('os').tmpdir());
+        const relative = path.relative(path.resolve(entryPath), playbackRoot);
+        const belowTemp = path.relative(playbackRoot, path.resolve(entryPath));
+        // Protect playback roots, their descendants, and ancestors containing them.
+        if (belowTemp.split(path.sep)[0].startsWith('youtarr-playback-') || relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) continue;
         try {
           await directoryManager.removeDirectoryResilient(entryPath);
         } catch (error) {

@@ -42,13 +42,14 @@ class YtdlpCommandBuilder {
     if (!YOUTUBE_ID_PATTERN.test(videoId)) throw new Error('Invalid video identity');
     return [
       ...this.buildCommonArgs(configModule.getConfig(), { skipSleepRequests: true }),
+      ...(configModule.getCookiesPath() ? mergeCookiePlayerClients([]) : []),
       '--ignore-config', '--no-playlist', '--no-progress', '--no-warnings',
       '--no-cache-dir', '--socket-timeout', String(PLAYBACK_SOCKET_TIMEOUT_SECONDS), '--retries', String(PLAYBACK_RETRIES),
       '--fragment-retries', String(PLAYBACK_RETRIES), '--concurrent-fragments', '1',
       '--limit-rate', PLAYBACK_RATE, '--max-filesize', String(maxBytes),
       '--match-filter', `!is_live & !is_upcoming & duration <= ${PLAYBACK_MAX_DURATION_SECONDS}`,
       '--paths', directory, '--paths', `temp:${directory}`,
-      '-f', 'bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/best[ext=mp4][height<=1080]',
+      '-f', `bestvideo[vcodec^=avc1][height<=1080][filesize_approx<=${Math.floor(maxBytes / 4)}]+bestaudio[acodec^=mp4a][filesize_approx<=${Math.floor(maxBytes / 4)}]/best[ext=mp4][height<=1080][filesize_approx<=${Math.floor(maxBytes / 2)}]`,
       '--merge-output-format', 'mp4', '--remux-video', 'mp4',
       '-o', path.join(directory, 'media.%(ext)s'),
       '--', `https://www.youtube.com/watch?v=${videoId}`,

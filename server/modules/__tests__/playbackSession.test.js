@@ -1,5 +1,5 @@
 jest.mock('../ytdlpProcess', () => ({ spawnYtDlp: jest.fn() }));
-jest.mock('../configModule', () => ({ getConfig: () => ({ useTmpForDownloads: true, tmpFilePath: '/tmp' }), getCookiesPath: () => null, getYtdlpCacheDir: () => '/tmp/cache' }));
+jest.mock('../configModule', () => ({ getConfig: () => ({ useTmpForDownloads: true, tmpFilePath: '/tmp' }), getCookiesPath: jest.fn(() => null), getYtdlpCacheDir: () => '/tmp/cache' }));
 jest.mock('../../models', () => ({ Video: { findOne: jest.fn() }, ChannelVideo: { findOne: jest.fn() } }));
 jest.mock('../../logger', () => ({ info: jest.fn(), warn: jest.fn() }));
 const fs = require('fs-extra');
@@ -132,7 +132,9 @@ test('simultaneous range readers have a bounded lease count', async () => {
   const session = await playback.openPlayback(ID);
   const first = playback.getSessionAsset(session.sessionId, 'media');
   const second = playback.getSessionAsset(session.sessionId, 'media');
+  const extra = Array.from({ length: 6 }, () => playback.getSessionAsset(session.sessionId, 'media'));
   expect(() => playback.getSessionAsset(session.sessionId, 'media')).toThrow('capacity');
+  extra.forEach(lease => lease.release());
   first.release();
   const third = playback.getSessionAsset(session.sessionId, 'media');
   second.release();
@@ -150,7 +152,7 @@ test('rejects an oversized completed cache without retaining it', async () => {
     });
     return child;
   });
-  await expect(playback.openPlayback(ID)).rejects.toMatchObject({ status: 503 });
+  await expect(playback.openPlayback(ID)).rejects.toMatchObject({ status: 422 });
   expect(await fs.pathExists(output)).toBe(false);
 });
 test('normal application exit cleanup removes only disposable media', async () => {
@@ -164,4 +166,111 @@ test('normal application exit cleanup removes only disposable media', async () =
   playback.stopProcesses();
   expect(await fs.pathExists(lease.filePath)).toBe(false);
   expect(await fs.readFile(local, 'utf8')).toBe('local');
+});
+
+test('concurrent preparation and a disconnected waiter reuse one process', async () => {
+  let finish;
+  spawnYtDlp.mockImplementation(args => {
+    const child = new EventEmitter();
+    finish = async () => {
+      await fs.writeFile(args[args.indexOf('-o') + 1].replace('%(ext)s', 'mp4'), 'media');
+      child.emit('close', 0);
+    };
+    return child;
+  });
+  const controller = new AbortController();
+  const first = playback.openPlayback(ID, { signal: controller.signal }).catch(e => e.status);
+  const second = playback.openPlayback(ID);
+  while (!finish) await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+  expect(await first).toBe(499);
+  const retry = playback.openPlayback(ID);
+  await finish();
+  expect(await retry).toEqual(await second);
+  expect(spawnYtDlp).toHaveBeenCalledTimes(1);
+});
+test('local media does not consume upstream capacity', async () => {
+  const filePath = path.join(fixture, 'local.mp4');
+  await fs.writeFile(filePath, 'local');
+  Video.findOne.mockResolvedValueOnce({ filePath }).mockResolvedValueOnce({ filePath });
+  await playback.openPlayback(ID);
+  await playback.openPlayback('bcdefghijkl');
+  expect((await playback.openPlayback('cdefghijklm')).source).toBe('cache');
+});
+test('filtered successful process is nonretryable', async () => {
+  spawnYtDlp.mockImplementation(() => {
+    const child = new EventEmitter();
+    process.nextTick(() => child.emit('close', 0));
+    return child;
+  });
+  await expect(playback.openPlayback(ID)).rejects.toMatchObject({ status: 422 });
+});
+test('private sources return a safe permanent error without raw diagnostics', async () => {
+  spawnYtDlp.mockImplementation(() => {
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    process.nextTick(() => { child.stderr.emit('data', 'Private video secret-url'); child.emit('close', 1); });
+    return child;
+  });
+  await expect(playback.openPlayback(ID)).rejects.toMatchObject({ status: 422, message: 'Playback source unavailable or unsupported' });
+});
+test('vanished staging entries during mux do not kill healthy preparation', async () => {
+  const realStat = fs.statSync.bind(fs);
+  const realRead = fs.readdirSync.bind(fs);
+  let finish;
+  spawnYtDlp.mockImplementation(args => {
+    const child = new EventEmitter();
+    finish = async () => {
+      await fs.writeFile(args[args.indexOf('-o') + 1].replace('%(ext)s', 'mp4'), 'media');
+      child.emit('close', 0);
+    };
+    return child;
+  });
+  const read = jest.spyOn(fs, 'readdirSync').mockImplementation(dir => [...realRead(dir), 'vanished.part']);
+  const stat = jest.spyOn(fs, 'statSync').mockImplementation(file => {
+    if (String(file).endsWith('vanished.part')) throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+    return realStat(file);
+  });
+  try {
+    const opened = playback.openPlayback(ID);
+    while (!finish) await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    await finish();
+    expect((await opened).source).toBe('cache');
+  } finally { read.mockRestore(); stat.mockRestore(); }
+});
+test('failed cache root allocation can be retried', async () => {
+  const mkdir = jest.spyOn(fs, 'mkdtemp').mockRejectedValueOnce(new Error('storage failure'));
+  try {
+    await expect(playback.openPlayback(ID)).rejects.toMatchObject({ status: 503 });
+    expect((await playback.openPlayback(ID)).source).toBe('cache');
+  } finally { mkdir.mockRestore(); }
+});
+test('playback arguments exclude configured cuts and arbitrary custom arguments', () => {
+  const args = builder.buildPlaybackArgs(ID, fixture, 1024);
+  expect(args.join(' ')).not.toMatch(/sponsorblock|force-keyframes|recode-video/);
+  expect(args[args.indexOf('-f') + 1]).toContain('filesize_approx<=256');
+});
+test('abandoned preparation is bounded by a grace period', async () => {
+  const child = new EventEmitter();
+  child.pid = 123456;
+  spawnYtDlp.mockReturnValue(child);
+  const kill = jest.spyOn(process, 'kill').mockImplementation(() => { process.nextTick(() => child.emit('close', null)); return true; });
+  const timer = jest.spyOn(global, 'setTimeout').mockImplementation((callback, delay, ...args) => require('timers').setTimeout(callback, delay === 30000 ? 20 : delay, ...args));
+  try {
+    const controller = new AbortController();
+    const opened = playback.openPlayback(ID, { signal: controller.signal }).catch(e => e.status);
+    while (!spawnYtDlp.mock.calls.length) await new Promise(resolve => setImmediate(resolve));
+    controller.abort();
+    expect(await opened).toBe(499);
+    await new Promise(resolve => require('timers').setTimeout(resolve, 100));
+    expect(kill).toHaveBeenCalledWith(-child.pid, 'SIGTERM');
+  } finally { timer.mockRestore(); kill.mockRestore(); }
+});
+
+test('cookie playback uses the managed SABR player clients', () => {
+  const cookies = require('../configModule').getCookiesPath;
+  cookies.mockReturnValue('/private/cookies');
+  try { expect(builder.buildPlaybackArgs(ID, fixture, 1024)).toContain('youtube:player_client=default,mweb,web_safari'); }
+  finally { cookies.mockReturnValue(null); }
 });

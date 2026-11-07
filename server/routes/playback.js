@@ -40,6 +40,7 @@ function createPlaybackRoutes({ verifyToken, playbackSession }) {
    *       200: { description: Media file }
    *       206: { description: Byte range }
    *       401: { description: Authentication required }
+   *       422: { description: Source unsupported, filtered or exceeds cache budget }
    *       503: { description: Retryable preparation or capacity failure }
    */
   router.get('/api/playback/:videoId', verifyToken, limiter, async (req, res) => {
@@ -49,7 +50,7 @@ function createPlaybackRoutes({ verifyToken, playbackSession }) {
     try {
       const session = await playbackSession.openPlayback(req.params.videoId, { signal: controller.signal });
       res.removeListener('close', abort);
-      if (res.destroyed) { await playbackSession.closePlayback(session.sessionId); return; }
+      if (res.destroyed) return;
       sendAsset(req, res, session.sessionId, session.asset);
     } catch (error) {
       if (!res.destroyed) errorResponse(res, error);
@@ -71,9 +72,9 @@ function createPlaybackRoutes({ verifyToken, playbackSession }) {
    *       206: { description: Byte range }
    *       404: { description: Session expired or invalid asset }
    *   delete:
-   *     summary: Close a playback session (authenticated; asset must be media)
+   *     summary: Release viewer hint; shared cache expires server-side (authenticated)
    *     responses:
-   *       204: { description: Session closed }
+   *       204: { description: Viewer release hint accepted; shared cache retained }
    */
   router.get('/api/playback/sessions/:sessionId/:asset', verifyToken, (req, res) => {
     try { sendAsset(req, res, req.params.sessionId, req.params.asset); }
@@ -82,7 +83,8 @@ function createPlaybackRoutes({ verifyToken, playbackSession }) {
   router.delete('/api/playback/sessions/:sessionId/:asset', verifyToken, async (req, res) => {
     try {
       if (req.params.asset !== 'media') return res.status(400).json({ error: 'Invalid asset' });
-      await playbackSession.closePlayback(req.params.sessionId);
+      // Shared cache ownership is server-side. Each response releases its own reader.
+      // DELETE is an idempotent release hint; it cannot revoke other viewers.
       res.sendStatus(204);
     } catch (error) { errorResponse(res, error); }
   });

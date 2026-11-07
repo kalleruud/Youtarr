@@ -55,3 +55,28 @@ test('cached range seeks bypass the preparation rate limit', async () => {
     expect(response.status).toBe(206);
   }
 });
+
+test('DELETE requires auth and cannot revoke shared readers', async () => {
+  expect((await request(app).delete('/api/playback/sessions/session/media')).status).toBe(401);
+  expect((await request(app).delete('/api/playback/sessions/session/media').set('x-access-token', 'test')).status).toBe(204);
+  expect(playback.closePlayback).not.toHaveBeenCalled();
+});
+
+test('disconnect cancels its waiter without closing shared playback and retry works', async () => {
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  let cancelled;
+  const aborted = new Promise(resolve => { cancelled = resolve; });
+  playback.openPlayback.mockImplementationOnce((id, { signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => { cancelled(); reject(Object.assign(new Error('Cancelled'), { status: 499 })); });
+    entered();
+  }));
+  const pending = request(app).get('/api/playback/abcdefghijk').set('x-access-token', 'test');
+  pending.end(() => {});
+  await started;
+  pending.abort();
+  await aborted;
+  await new Promise(resolve => pending.app.close(resolve));
+  expect(playback.closePlayback).not.toHaveBeenCalled();
+  expect((await request(app).get('/api/playback/abcdefghijk').set('x-access-token', 'test')).status).toBe(200);
+});
