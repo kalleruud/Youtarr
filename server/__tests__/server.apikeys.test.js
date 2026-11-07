@@ -323,6 +323,13 @@ const createServerModule = ({
           previewTemplate: jest.fn(),
           validateTemplate: jest.fn().mockResolvedValue({ ok: true })
         }));
+        // Playback preparation also loads fs-extra; its HTTP contract has dedicated fixtures.
+        jest.doMock('../modules/playbackSession', () => ({
+          openPlayback: jest.fn(),
+          getSessionAsset: jest.fn(),
+          closePlayback: jest.fn(),
+          hasReadyPlayback: jest.fn(() => false),
+        }));
         // Same reason: cookieTest also loads ytDlpRunner.
         jest.doMock('../modules/cookieTest', () => ({
           run: jest.fn(),

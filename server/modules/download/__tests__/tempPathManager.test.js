@@ -291,6 +291,20 @@ describe('TempPathManager', () => {
       mockEnsureDir.mockRestore();
     });
 
+    it('does not clean inside a configured playback root', async () => {
+      configModule.getConfig.mockReturnValue({ useTmpForDownloads: true, tmpFilePath: require('path').join(require('os').tmpdir(), 'youtarr-playback-owned') });
+      await tempPathManager.cleanTempDirectory();
+      expect(mockRemove).not.toHaveBeenCalled();
+    });
+
+    it('preserves playback cache roots when external cleanup overlaps OS temp', async () => {
+      const tmp = require('os').tmpdir();
+      configModule.getConfig.mockReturnValue({ useTmpForDownloads: true, tmpFilePath: tmp });
+      mockReaddir.mockResolvedValue(['youtarr-playback-owned', 'download.part']);
+      await tempPathManager.cleanTempDirectory();
+      expect(mockRemove.mock.calls).toEqual([[require('path').join(tmp, 'download.part')]]);
+    });
+
     it('should clean external temp contents without removing the root', async () => {
       configModule.getConfig.mockReturnValue({
         useTmpForDownloads: true,

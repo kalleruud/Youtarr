@@ -1,3 +1,5 @@
+const createPlaybackRoutes = require('./playback');
+const playbackSession = require('../modules/playbackSession');
 const createHealthRoutes = require('./health');
 const createAuthRoutes = require('./auth');
 const createSetupRoutes = require('./setup');
@@ -108,6 +110,8 @@ function registerRoutes(app, deps) {
 
   // Channel show poster routes (upload/select/pin/reset/regenerate, Jellyfin artwork refresh)
   app.use(createChannelArtworkRoutes({ verifyToken, channelArtworkModule, artworkUploadRateLimiter }));
+
+  app.use(createPlaybackRoutes({ verifyToken, playbackSession }));
 
   // Video routes
   app.use(createVideoRoutes({
