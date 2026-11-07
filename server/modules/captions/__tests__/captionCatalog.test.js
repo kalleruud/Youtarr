@@ -111,6 +111,23 @@ describe('setProtection and requestRetry', () => {
     expect((await store.listTracks(YOUTUBE_ID))[0]).toMatchObject({ track_code: 'en', protected: true });
   });
 
+  test('repeating protection keeps an enrichment-recorded track as recorded', async () => {
+    const catalog = setup({ metadata: info({ automaticCaptions: { en: automatic('en') } }) });
+    fs.writeFileSync(sandbox.sidecar('en-GB'), SRT);
+    const recorded = {
+      youtube_id: YOUTUBE_ID, track_code: 'en-GB', language: 'en', source: 'uploaded', origin: 'enrichment',
+      file_path: sandbox.sidecar('en-GB'), media_revision: 'rev-1', source_sha256: 'a'.repeat(64),
+      result_sha256: 'b'.repeat(64), normalizer_version: 2, retrieved_at: NOW, protected: false,
+    };
+    await store.saveTrack(recorded);
+    const results = [];
+    for (let i = 0; i < 2; i++) results.push(await catalog.setProtection(YOUTUBE_ID, 'en-GB', true));
+    expect([results, (await store.listTracks(YOUTUBE_ID))]).toEqual([
+      [{ status: 'ok' }, { status: 'ok' }],
+      [{ ...recorded, protected: true }],
+    ]);
+  });
+
   test('protecting a missing sidecar is not found', async () => {
     const catalog = setup();
     expect(await catalog.setProtection(YOUTUBE_ID, 'en', true)).toEqual({ status: 'not-found' });

@@ -58,12 +58,16 @@ class CaptionStore {
     await CaptionTrack.destroy({ where: { youtube_id: youtubeId, track_code: codes } });
   }
 
+  /**
+   * Whether the track has a row. Existence is read separately: the MySQL
+   * dialect reports changed rows, not matched rows, so an update that
+   * repeats the stored value affects 0 rows on an existing track.
+   */
   async setProtected(youtubeId, code, value) {
-    const [count] = await CaptionTrack.update(
-      { protected: value, updated_at: new Date() },
-      { where: { youtube_id: youtubeId, track_code: code } }
-    );
-    return count > 0;
+    const existing = await CaptionTrack.findOne({ where: { youtube_id: youtubeId, track_code: code } });
+    if (!existing) return false;
+    if (Boolean(existing.protected) !== value) await existing.update({ protected: value, updated_at: new Date() });
+    return true;
   }
 
   async getJob(youtubeId) {

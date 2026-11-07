@@ -24,10 +24,12 @@ function createMemoryStore({ videos = [] } = {}) {
     async deleteTracks(youtubeId, codes) {
       for (const code of codes) tracks.delete(key(youtubeId, code));
     },
+    // Like the real store: existence is looked up, and the row is written
+    // only when the value changes (MySQL counts changed rows, not matched).
     async setProtected(youtubeId, code, value) {
       const row = tracks.get(key(youtubeId, code));
       if (!row) return false;
-      row.protected = value;
+      if (row.protected !== value) row.protected = value;
       return true;
     },
     async getJob(youtubeId) {

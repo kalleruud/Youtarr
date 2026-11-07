@@ -30,6 +30,21 @@ test('saving a new track creates it', async () => {
 });
 
 test('protection on an unrecorded track reports no row', async () => {
-  CaptionTrack.update.mockResolvedValue([0]);
+  CaptionTrack.findOne.mockResolvedValue(null);
   expect(await store.setProtected('a', 'en', true)).toBe(false);
+});
+
+test('repeating the stored protection value still reports the row', async () => {
+  // MySQL reports changed rows: a repeated value affects 0 rows.
+  const existing = { protected: true, update: jest.fn() };
+  CaptionTrack.findOne.mockResolvedValue(existing);
+  CaptionTrack.update.mockResolvedValue([0]);
+  expect(await store.setProtected('a', 'en', true)).toBe(true);
+});
+
+test('changing protection updates the found row', async () => {
+  const existing = { protected: false, update: jest.fn() };
+  CaptionTrack.findOne.mockResolvedValue(existing);
+  await store.setProtected('a', 'en', true);
+  expect(existing.update).toHaveBeenCalledWith(expect.objectContaining({ protected: true }));
 });
