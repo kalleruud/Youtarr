@@ -29,6 +29,9 @@ const { parseSubtitleLanguages, isExpandableLanguageCode, isPlainLanguageCode, l
 // use_regex=True); Node 20 cannot evaluate the (?-i:...) groups.
 const LANGUAGE_VARIANT_SUFFIX = '(-(?-i:[A-Z][a-z]{3}))?(-(?-i:[A-Z]{2}|[0-9]{3}))?';
 
+// A YouTube video id, the only shape interpolated into --match-filter.
+const YOUTUBE_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+
 class YtdlpCommandBuilder {
   /**
    * Build output path with optional subfolder support
@@ -546,14 +549,20 @@ class YtdlpCommandBuilder {
   /**
    * Build match filter string for yt-dlp based on channel filter configuration
    * @param {Object} filterConfig - ChannelFilterConfig instance with min_duration, max_duration, title_filter_regex
+   * @param {string[]} [excludedVideoIds] - YouTube ids an acquisition-policy override excludes
    * @returns {string} - Complete match filter string for yt-dlp
    */
-  static buildMatchFilters(filterConfig = null) {
+  static buildMatchFilters(filterConfig = null, excludedVideoIds = []) {
     // Base filters - always applied for channel downloads
     const baseFilters = [
       'availability!=subscriber_only',
       '!is_live',
       'live_status!=is_upcoming',
+      // Videos an acquisition-policy override keeps out of automatic sweeps.
+      // Only well-formed YouTube ids are interpolated, quoted.
+      ...(excludedVideoIds || [])
+        .filter(id => YOUTUBE_ID_PATTERN.test(id))
+        .map(id => `id!='${id}'`),
     ];
 
     // If no filter config provided or no filters set, return base filters only
@@ -640,6 +649,7 @@ class YtdlpCommandBuilder {
    * @param {Object|null} filterConfig - Channel filter configuration
    * @param {string|null} audioFormat - Audio format ('video_mp3', 'mp3_only', or null for video only)
    * @param {boolean} skipVideoFolder - If true, skip the video subfolder level (flat structure)
+   * @param {string[]} excludedVideoIds - YouTube ids acquisition-policy overrides keep out of the sweep
    * @returns {string[]} - Array of yt-dlp command arguments
    */
   static getBaseCommandArgs(
@@ -648,7 +658,8 @@ class YtdlpCommandBuilder {
     subFolder = null,
     filterConfig = null,
     audioFormat = null,
-    skipVideoFolder = false
+    skipVideoFolder = false,
+    excludedVideoIds = []
   ) {
     const config = configModule.getConfig();
     const res = resolution || config.preferredResolution || '1080';
@@ -698,7 +709,7 @@ class YtdlpCommandBuilder {
     }
 
     // Build match filter with any channel-specific filtering
-    const matchFilter = this.buildMatchFilters(filterConfig);
+    const matchFilter = this.buildMatchFilters(filterConfig, excludedVideoIds);
 
     args.push(
       '--ignore-errors',

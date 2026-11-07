@@ -10,7 +10,7 @@ const configModule = require('../configModule');
 const downloadModule = require('../downloadModule');
 const storageGuard = require('../storageGuard');
 const Channel = require('../../models/channel');
-const channelIdentity = require('./channelIdentity');
+const channelSweepPlanner = require('../acquisition/channelSweepPlanner');
 
 const { waitForSweepEnd } = require('./sweepCompletion');
 const sweepRunSummary = require('./sweepRunSummary');
@@ -227,74 +227,45 @@ class AutoDownloadScheduler {
   }
 
   /**
-   * Build the list of yt-dlp target URLs for all enabled channels, one per
-   * enabled tab (video/short/livestream). Empty when nothing is downloadable.
-   * @returns {Promise<string[]>}
+   * Plan the automatic sweep of every enabled channel: one URL per enabled
+   * tab whose acquisition policy downloads (issue #10), single-video URLs for
+   * explicit per-video download overrides, and the ids per-video overrides
+   * keep out of the fetched tabs.
+   * @returns {Promise<{urls: string[], excludedVideoIds: string[], skipped: Object[]}>}
    */
-  async getEnabledChannelDownloadUrls() {
+  async getChannelSweepPlan() {
     const channels = await Channel.findAll({
       where: { enabled: true },
       attributes: ['channel_id', 'url', 'auto_download_enabled_tabs']
     });
+    return channelSweepPlanner.loadChannelSweepPlan(channels);
+  }
 
-    const urls = [];
-    for (const channel of channels) {
-      if (channel.channel_id) {
-        const canonical = channelIdentity.resolveChannelUrlFromId(channel.channel_id);
-
-        // Parse the enabled tabs for this channel (empty string means no tabs enabled)
-        const enabledTabs = (channel.auto_download_enabled_tabs ?? '')
-          .split(',')
-          .map(t => t.trim())
-          .filter(tab => tab.length > 0);
-
-        if (enabledTabs.length === 0) {
-          // All tabs disabled for this channel, skip adding URLs
-          continue;
-        }
-
-        // Generate a URL for each enabled tab type
-        for (const tabType of enabledTabs) {
-          // auto_download_enabled_tabs stores 'video', 'short', 'livestream'
-          // but we need 'videos', 'shorts', 'streams' for URLs
-          let tabUrl;
-          switch (tabType) {
-          case 'video':
-            tabUrl = 'videos';
-            break;
-          case 'short':
-            tabUrl = 'shorts';
-            break;
-          case 'livestream':
-            tabUrl = 'streams';
-            break;
-          default:
-            tabUrl = 'videos'; // fallback
-          }
-
-          urls.push(`${canonical}/${tabUrl}`);
-        }
-      } else {
-        // Fallback for channels without channel_id
-        urls.push(channel.url);
-      }
-    }
-    return urls;
+  /**
+   * Build the list of yt-dlp target URLs for all enabled channels, one per
+   * enabled tab (video/short/livestream) the channel's acquisition policy
+   * downloads. Empty when nothing is downloadable.
+   * @returns {Promise<string[]>}
+   */
+  async getEnabledChannelDownloadUrls() {
+    const plan = await this.getChannelSweepPlan();
+    return plan.urls;
   }
 
   /**
    * Generate a temporary file with enabled channel URLs for yt-dlp
    * Respects the auto_download_enabled_tabs column to generate URLs for each enabled tab type
+   * @param {{urls: string[]}|null} [plan] - A sweep plan already loaded by the caller
    * @returns {Promise<string>} - Path to the temporary file
    */
-  async generateChannelsFile() {
+  async generateChannelsFile(plan = null) {
     const tempFilePath = path.join(os.tmpdir(), `channels-temp-${uuidv4()}.txt`);
     try {
-      const urls = await this.getEnabledChannelDownloadUrls();
+      const urls = plan ? plan.urls : await this.getEnabledChannelDownloadUrls();
 
       if (urls.length === 0) {
-        const error = new Error('No valid channel URLs to download - all enabled channels have no enabled tabs');
-        logger.warn('No URLs generated for channel downloads - all enabled channels have disabled tabs');
+        const error = new Error('No valid channel URLs to download - no enabled channel has a tab its acquisition policy downloads');
+        logger.warn('No URLs generated for channel downloads - enabled channels have no tabs set to download automatically');
         throw error;
       }
 

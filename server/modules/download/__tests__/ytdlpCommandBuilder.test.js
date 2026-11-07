@@ -626,6 +626,16 @@ describe('YtdlpCommandBuilder', () => {
   });
 
   describe('buildMatchFilters', () => {
+    it('excludes acquisition-policy override ids', () => {
+      const result = YtdlpCommandBuilder.buildMatchFilters(null, ['aaaaaaaaaaa', 'b-_bbbbbbbb']);
+      expect(result).toBe('availability!=subscriber_only & !is_live & live_status!=is_upcoming & id!=\'aaaaaaaaaaa\' & id!=\'b-_bbbbbbbb\'');
+    });
+
+    it('never interpolates malformed exclusion ids', () => {
+      const result = YtdlpCommandBuilder.buildMatchFilters(null, ['x\' & title~=\'y', 'short']);
+      expect(result).toBe('availability!=subscriber_only & !is_live & live_status!=is_upcoming');
+    });
+
     it('should return base filters when no filter config provided', () => {
       const result = YtdlpCommandBuilder.buildMatchFilters();
       expect(result).toBe('availability!=subscriber_only & !is_live & live_status!=is_upcoming');

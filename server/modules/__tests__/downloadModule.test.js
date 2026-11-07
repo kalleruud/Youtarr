@@ -33,6 +33,17 @@ jest.mock('../download/ytdlpCommandBuilder');
 jest.mock('../channelModule', () => ({
   generateChannelsFile: jest.fn(),
   getEnabledChannelDownloadUrls: jest.fn(),
+  getChannelSweepPlan: jest.fn(),
+}));
+// The real sweep planner runs against empty policy storage, so channel tab
+// URLs come out as they did before acquisition policies existed.
+jest.mock('../acquisition/acquisitionPolicyStore', () => ({
+  getGlobal: jest.fn().mockResolvedValue({ delivery: null, live: null }),
+  getChannelPolicies: jest.fn().mockResolvedValue(new Map()),
+  getVideoOverridesForChannels: jest.fn().mockResolvedValue([]),
+}));
+jest.mock('../channel/channelIdentity', () => ({
+  resolveChannelUrlFromId: jest.fn((id) => `https://youtube.com/channel/${id}`),
 }));
 jest.mock('../../models/channel', () => {
   const Channel = jest.requireActual('../../models/channel');
@@ -138,6 +149,7 @@ describe('DownloadModule', () => {
 
     const channelModuleMock = require('../channelModule');
     channelModuleMock.generateChannelsFile = jest.fn();
+    channelModuleMock.getChannelSweepPlan = jest.fn().mockResolvedValue({ urls: ['https://youtube.com/channel/UC1/videos'], excludedVideoIds: [] });
     channelModuleMock.resolveChannelUrlFromId = jest.fn((id) => `https://youtube.com/channel/${id}`);
     channelModuleMock.getEnabledChannelDownloadUrls = jest.fn().mockResolvedValue([
       'https://youtube.com/channel/UC1/videos',
@@ -453,7 +465,7 @@ describe('DownloadModule', () => {
 
       await downloadModule.doChannelDownloads(queuedJob, true);
 
-      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('720', true);
+      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('720', true, null, null, null, false, []);
       expect(mockDownloadExecutor.doDownload).toHaveBeenCalled();
       const doDownloadCall = mockDownloadExecutor.doDownload.mock.calls[0];
       const args = doDownloadCall[0];
@@ -677,7 +689,7 @@ describe('DownloadModule', () => {
         false
       );
       expect(channelModuleMock.generateChannelsFile).toHaveBeenCalled();
-      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('1080', false);
+      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('1080', false, null, null, null, false, []);
       expect(mockDownloadExecutor.doDownload).toHaveBeenCalledWith(
         expect.arrayContaining([
           '--format', 'best[height<=1080]',
@@ -697,7 +709,7 @@ describe('DownloadModule', () => {
 
       await downloadModule.doSingleChannelDownloadJob(jobData);
 
-      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('720', false);
+      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('720', false, null, null, null, false, []);
     });
 
     it('should use override settings when provided', async () => {
@@ -712,7 +724,7 @@ describe('DownloadModule', () => {
 
       await downloadModule.doSingleChannelDownloadJob(jobData);
 
-      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('720', true);
+      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('720', true, null, null, null, false, []);
       expect(mockDownloadExecutor.doDownload).toHaveBeenCalledWith(
         expect.arrayContaining([
           '--playlist-end', '10'
@@ -733,7 +745,7 @@ describe('DownloadModule', () => {
 
       await downloadModule.doSingleChannelDownloadJob(jobData);
 
-      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('480', false);
+      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('480', false, null, null, null, false, []);
     });
 
     it('should handle existing job id', async () => {
@@ -1248,7 +1260,7 @@ describe('DownloadModule', () => {
       await downloadModule.executeGroupDownload(group, mockJobId, 'Channel Downloads - Group 1/1 (480p, lowres)', jobData, true);
 
       // Subfolder should NOT be passed to download - post-processing handles subfolder routing
-      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('480', false, null, undefined, null, false);
+      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('480', false, null, undefined, null, false, []);
       expect(mockDownloadExecutor.doDownload).toHaveBeenCalledWith(
         expect.arrayContaining([
           '--playlist-end', '5'
@@ -1279,7 +1291,7 @@ describe('DownloadModule', () => {
       await downloadModule.executeGroupDownload(group, mockJobId, 'Channel Downloads - Group 1/1 (1080p)', jobData, true);
 
       // Subfolder should NOT be passed - post-processing handles it
-      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('1080', true, null, undefined, null, false);
+      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('1080', true, null, undefined, null, false, []);
     });
 
     it('should pass filterConfig to YtdlpCommandBuilder when group has filters', async () => {
@@ -1304,7 +1316,29 @@ describe('DownloadModule', () => {
       await downloadModule.executeGroupDownload(group, mockJobId, 'Channel Downloads - Group 1/1 (1080p)', {}, true);
 
       // Verify filterConfig is passed as the 4th parameter, audioFormat is null when not in filterConfig
-      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('1080', false, null, mockFilterConfig, null, false);
+      expect(YtdlpCommandBuilderMock.getBaseCommandArgs).toHaveBeenCalledWith('1080', false, null, mockFilterConfig, null, false, []);
+    });
+
+    it('skips channels whose acquisition policy streams and passes override exclusions', async () => {
+      const store = require('../acquisition/acquisitionPolicyStore');
+      store.getChannelPolicies.mockResolvedValueOnce(new Map([['UC456', { delivery: 'stream', live: null }]]));
+      store.getVideoOverridesForChannels.mockResolvedValueOnce([{ youtubeId: 'aaaaaaaaaaa', channelId: 'UC123', delivery: 'stream', live: null }]);
+      require('../../models/channelvideo').findAll.mockResolvedValueOnce([]);
+      jest.spyOn(require('../../models/video'), 'findAll').mockResolvedValueOnce([]);
+      jest.spyOn(require('../archiveModule'), 'filterArchivedVideoIds').mockReturnValueOnce(new Set());
+      const group = {
+        quality: '1080',
+        subFolder: null,
+        channels: [
+          { channel_id: 'UC123', auto_download_enabled_tabs: 'video' },
+          { channel_id: 'UC456', auto_download_enabled_tabs: 'video' },
+        ]
+      };
+
+      await downloadModule.executeGroupDownload(group, mockJobId, 'Channel Downloads - Group 1/1 (1080p)', {}, true);
+
+      expect([fsPromises.writeFile.mock.calls[0][1], YtdlpCommandBuilderMock.getBaseCommandArgs.mock.calls[0][6]])
+        .toEqual(['https://youtube.com/channel/UC123/videos', ['aaaaaaaaaaa']]);
     });
 
     it('should pass skipJobTransition flag to doDownload', async () => {
