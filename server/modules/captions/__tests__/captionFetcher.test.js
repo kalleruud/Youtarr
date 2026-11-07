@@ -54,3 +54,15 @@ test('metadata for another video is rejected', async () => {
   });
   await expect(fetchCaptions({ youtubeId: ID, languages: ['en'], outputDir: dir })).rejects.toMatchObject({ kind: 'failed' });
 });
+
+test('the abort signal is handed to the yt-dlp run', async () => {
+  ytDlpRunner.run.mockRejectedValue(Object.assign(new Error('yt-dlp run aborted'), { name: 'AbortError' }));
+  const controller = new AbortController();
+  await fetchCaptions({ youtubeId: ID, languages: ['en'], outputDir: dir, signal: controller.signal }).catch(() => {});
+  expect(ytDlpRunner.run.mock.calls[0][1].signal).toBe(controller.signal);
+});
+
+test('an aborted run is reported as aborted', async () => {
+  ytDlpRunner.run.mockRejectedValue(Object.assign(new Error('yt-dlp run aborted'), { name: 'AbortError' }));
+  await expect(fetchCaptions({ youtubeId: ID, languages: ['en'], outputDir: dir })).rejects.toMatchObject({ kind: 'aborted' });
+});

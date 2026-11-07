@@ -1,6 +1,8 @@
 const fs = require('fs-extra');
 const path = require('path');
 const Channel = require('../models/channel');
+const Video = require('../models/video');
+const publicationLease = require('./download/videoPublicationLease');
 const configModule = require('./configModule');
 const plexModule = require('./plexModule');
 const { Op } = require('sequelize');
@@ -1041,13 +1043,19 @@ class ChannelSettingsModule {
       const newParentDir = path.dirname(newPath);
       await ensureDir(newParentDir);
 
-      // Move the folder with retries for resilience
-      await moveWithRetries(oldPath, newPath);
-
-      logger.info({ newPath }, 'Successfully moved channel folder');
-
-      // Update all video file paths in the database
-      await this.updateVideoFilePaths(channel.channel_id, oldPath, newPath);
+      const videos = await Video.findAll({ where: { channel_id: channel.channel_id } });
+      const releases = [];
+      try {
+        // Stable ordering prevents competing relocations from deadlocking.
+        for (const id of [...new Set(videos.map((video) => video.youtubeId))].sort()) {
+          releases.push(await publicationLease.acquire(id));
+        }
+        await moveWithRetries(oldPath, newPath);
+        logger.info({ newPath }, 'Successfully moved channel folder');
+        await this.updateVideoFilePaths(channel.channel_id, oldPath, newPath);
+      } finally {
+        for (const release of releases.reverse()) await release();
+      }
 
       // Trigger Plex library refresh asynchronously (non-blocking)
       // Don't await this to prevent timeout issues from blocking the operation

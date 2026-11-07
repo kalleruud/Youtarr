@@ -43,16 +43,20 @@ function classifyFetchError(err) {
 }
 
 /**
- * @param {{youtubeId: string, languages: string[], outputDir: string}} params
+ * @param {{youtubeId: string, languages: string[], outputDir: string, signal?: AbortSignal}} params
+ *   `signal` kills the yt-dlp process (a download started); the error's kind is `aborted`.
  * @returns {Promise<{info: object, captions: Map<string, string>}>}
  */
-async function fetchCaptions({ youtubeId, languages, outputDir }) {
+async function fetchCaptions({ youtubeId, languages, outputDir, signal }) {
   const args = YtdlpCommandBuilder.buildCaptionEnrichmentArgs(configModule.getConfig() || {}, youtubeId, languages, outputDir);
   let runError = null;
   try {
-    await ytDlpRunner.run(args, { timeoutMs: FETCH_TIMEOUT_MS });
+    await ytDlpRunner.run(args, { timeoutMs: FETCH_TIMEOUT_MS, signal });
   } catch (err) {
     runError = err;
+  }
+  if (runError && (runError.name === 'AbortError' || (signal && signal.aborted))) {
+    throw new CaptionFetchError('aborted', 'The request was stopped because a download started');
   }
   if (runError) {
     const classified = classifyFetchError(runError);

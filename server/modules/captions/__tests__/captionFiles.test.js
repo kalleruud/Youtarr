@@ -52,3 +52,14 @@ test('the media revision changes when the media file is replaced', async () => {
   fs.writeFileSync(sandbox.filePath, 'a different, longer synthetic video');
   expect(await files.mediaRevision(sandbox.filePath)).not.toBe(before);
 });
+
+test.each(['installCaption', 'retireCaption'])('%s rechecks after staging and preserves a blocked sidecar', async (operation) => {
+  fs.writeFileSync(sandbox.sidecar('en'), 'existing');
+  const result = await files[operation]({
+    targetPath: sandbox.sidecar('en'), bytes: Buffer.from(SRT),
+    backupRoot: backupRoot(), mediaRoot: sandbox.mediaRoot,
+    beforeMutation: async () => 'busy',
+  });
+  expect([result.blocked, fs.readFileSync(sandbox.sidecar('en'), 'utf8'),
+    fs.readdirSync(sandbox.videoDir).some((name) => name.startsWith('.caption-'))]).toEqual(['busy', 'existing', false]);
+});

@@ -53,6 +53,23 @@ describe('recordDownload', () => {
     expect(JSON.parse((await store.getJob(YOUTUBE_ID)).wanted)).toEqual([{ language: 'en', reason: 'awaiting-uploaded' }]);
   });
 
+  test('an existing automatic track under uploaded-only schedules a check and stays on disk', async () => {
+    const catalog = setup({ metadata: info({ automaticCaptions: { en: automatic('en') } }), config: { captionSourcePolicy: 'uploaded-only' } });
+    fs.writeFileSync(sandbox.sidecar('en'), SRT);
+    await catalog.recordDownload({ youtubeId: YOUTUBE_ID, filePath: sandbox.filePath });
+    expect([JSON.parse((await store.getJob(YOUTUBE_ID)).wanted), fs.existsSync(sandbox.sidecar('en'))])
+      .toEqual([[{ language: 'en', reason: 'automatic-not-allowed' }], true]);
+  });
+
+  test('an existing machine translation with translations disabled schedules a check and stays on disk', async () => {
+    const metadata = info({ automaticCaptions: { nb: automatic('nb', { from: 'en' }) } });
+    const catalog = setup({ metadata, config: { subtitleLanguage: 'nb' } });
+    fs.writeFileSync(sandbox.sidecar('nb'), SRT);
+    await catalog.recordDownload({ youtubeId: YOUTUBE_ID, filePath: sandbox.filePath });
+    expect([JSON.parse((await store.getJob(YOUTUBE_ID)).wanted), fs.existsSync(sandbox.sidecar('nb'))])
+      .toEqual([[{ language: 'nb', reason: 'translation-only' }], true]);
+  });
+
   test('a complete download schedules no check', async () => {
     const catalog = setup({ metadata: info({ subtitles: { en: uploaded('en') } }) });
     fs.writeFileSync(sandbox.sidecar('en'), SRT);

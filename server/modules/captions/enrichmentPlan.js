@@ -7,7 +7,9 @@
  * protected or was recorded for a different media revision. An uploaded track
  * under a new code ("en-GB") retires the lower-ranked tracks of its language
  * ("en" automatic), as the post-download pruning does, except protected ones
- * and codes the user listed verbatim.
+ * and codes the user listed verbatim; a code listed verbatim is never
+ * replaced either. A retirement names every install that supersedes it, and
+ * the publisher retires it only after one of those was published.
  */
 const { SOURCE_RANK, SOURCES } = require('./captionSources');
 const { matchesEntry } = require('./captionTrackSelection');
@@ -17,6 +19,7 @@ const SKIP = Object.freeze({
   PROTECTED: 'protected',
   OTHER_REVISION: 'recorded-for-other-media-revision',
   COVERED: 'language-already-covered',
+  VERBATIM: 'listed-verbatim',
 });
 
 function rank(source) {
@@ -31,7 +34,7 @@ function rank(source) {
  * @param {{code: string, source: string, protected: boolean, mediaRevision: string|null}[]} params.onDisk
  * @param {string} params.currentRevision
  * @param {string[]} [params.verbatimCodes] - codes listed verbatim in the language setting
- * @returns {{installs: object[], retires: object[], skipped: {code: string, reason: string}[]}}
+ * @returns {{installs: object[], retires: {code: string, supersededBy: string[]}[], skipped: {code: string, reason: string}[]}}
  */
 function planEnrichmentWrites({ selected, languages, fetchedCodes, onDisk, currentRevision, verbatimCodes = [] }) {
   const installs = [];
@@ -56,6 +59,10 @@ function planEnrichmentWrites({ selected, languages, fetchedCodes, onDisk, curre
       skipped.push({ code: track.code, reason: SKIP.OTHER_REVISION });
       continue;
     }
+    if (sameCode && verbatim.has(sameCode.code.toLowerCase())) {
+      skipped.push({ code: track.code, reason: SKIP.VERBATIM });
+      continue;
+    }
     const sameLanguage = onDisk.filter((existing) => matchesEntry(track.language, existing.code));
     if (sameLanguage.some((existing) => rank(existing.source) >= rank(track.source))) {
       skipped.push({ code: track.code, reason: SKIP.COVERED });
@@ -64,9 +71,10 @@ function planEnrichmentWrites({ selected, languages, fetchedCodes, onDisk, curre
     installs.push({ ...track, replaces: sameCode ? sameCode.code : null });
     if (track.source !== SOURCES.UPLOADED) continue;
     for (const existing of sameLanguage) {
-      if (existing.code === track.code || existing.protected || isStale(existing) ||
-          verbatim.has(existing.code.toLowerCase()) || retires.some((retire) => retire.code === existing.code)) continue;
-      retires.push({ code: existing.code, supersededBy: track.code });
+      if (existing.code === track.code || existing.protected || isStale(existing) || verbatim.has(existing.code.toLowerCase())) continue;
+      const planned = retires.find((retire) => retire.code === existing.code);
+      if (planned) planned.supersededBy.push(track.code);
+      else retires.push({ code: existing.code, supersededBy: [track.code] });
     }
   }
   const installed = new Set(installs.map((install) => install.code));

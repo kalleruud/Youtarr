@@ -12,6 +12,7 @@ const { assessCoverage, preferencesFromConfig, matchesEntry } = require('./capti
 const { resolveRetrySchedule, nextAttemptAt } = require('./enrichmentSchedule');
 const files = require('./captionFiles');
 const { CAPTION_RECORD_KEY } = require('./captionRecord');
+const defaultLease = require('../download/videoPublicationLease');
 
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
 const PREVIEW_VIDEO_LIMIT = 200;
@@ -28,9 +29,10 @@ function isAudioOnly(filePath) {
 }
 
 class CaptionCatalog {
-  constructor({ store, configModule, now = () => new Date() } = {}) {
+  constructor({ store, configModule, lease = defaultLease, now = () => new Date() } = {}) {
     this.store = store;
     this.configModule = configModule;
+    this.lease = lease;
     this.now = now;
   }
 
@@ -90,7 +92,16 @@ class CaptionCatalog {
     }
   }
 
-  async recordDownload({ youtubeId, filePath }) {
+  /**
+   * Download finalization's caption bookkeeping for one video, under the
+   * video's publication lease so a delayed caption check cannot publish or
+   * retire a track in between.
+   */
+  recordDownload(video) {
+    return this.lease.withLease(video.youtubeId, () => this.recordDownloadLeased(video));
+  }
+
+  async recordDownloadLeased({ youtubeId, filePath }) {
     const info = await this.readInfo(youtubeId);
     const records = Array.isArray(info?.[CAPTION_RECORD_KEY]) ? info[CAPTION_RECORD_KEY] : [];
     const revision = await files.mediaRevision(filePath);
@@ -220,7 +231,11 @@ class CaptionCatalog {
     };
   }
 
-  async setProtection(youtubeId, code, value) {
+  setProtection(youtubeId, code, value) {
+    return this.lease.withLease(youtubeId, () => this.setProtectionLeased(youtubeId, code, value));
+  }
+
+  async setProtectionLeased(youtubeId, code, value) {
     const video = await this.store.getVideo(youtubeId);
     if (!video || !video.filePath) return { status: 'not-found' };
     const sidecars = await files.listSidecars(video.filePath);

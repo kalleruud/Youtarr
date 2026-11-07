@@ -15,7 +15,7 @@ test('installs a fetched track for a missing language', () => {
 
 test('an uploaded track retires the automatic track of its language', () => {
   const result = plan({ onDisk: [{ code: 'en', source: 'automatic', protected: false, mediaRevision: 'r1' }] });
-  expect(result.retires).toEqual([{ code: 'en', supersededBy: 'en-GB' }]);
+  expect(result.retires).toEqual([{ code: 'en', supersededBy: ['en-GB'] }]);
 });
 
 test('a protected automatic track is never retired', () => {
@@ -26,6 +26,20 @@ test('a protected automatic track is never retired', () => {
 test('a code listed verbatim is never retired', () => {
   const result = plan({ onDisk: [{ code: 'en-orig', source: 'automatic', protected: false, mediaRevision: 'r1' }], verbatimCodes: ['en-orig'] });
   expect(result.retires).toEqual([]);
+});
+
+test('a code listed verbatim is never replaced under the same code', () => {
+  const result = plan({ onDisk: [{ code: 'en-GB', source: 'automatic', protected: false, mediaRevision: 'r1' }], verbatimCodes: ['en-GB'] });
+  expect([result.installs, result.skipped]).toEqual([[], [{ code: 'en-GB', reason: 'listed-verbatim' }]]);
+});
+
+test('a retirement names every uploaded track that supersedes it', () => {
+  const result = plan({
+    selected: [{ language: 'en', code: 'en-GB', source: 'uploaded' }, { language: 'en', code: 'en-US', source: 'uploaded' }],
+    fetchedCodes: new Set(['en-GB', 'en-US']),
+    onDisk: [{ code: 'en', source: 'automatic', protected: false, mediaRevision: 'r1' }],
+  });
+  expect(result.retires).toEqual([{ code: 'en', supersededBy: ['en-GB', 'en-US'] }]);
 });
 
 test('a protected track with the same code is not replaced', () => {

@@ -126,6 +126,19 @@ function selectPublishableTracks({ preferences, offered }) {
   return { tracks, missing, unsupported };
 }
 
+/**
+ * Whether the preferences accept an existing track of this source. Only
+ * allowed tracks cover a language; disallowed sidecars stay on disk but the
+ * preference counts as unmet. Generated and unknown tracks (sidecars written
+ * before provenance was tracked) cannot be judged and count as allowed.
+ */
+function isSourceAllowed(preferences, source) {
+  const automaticAllowed = preferences.sourcePolicy !== 'uploaded-only';
+  if (source === SOURCES.AUTOMATIC) return automaticAllowed;
+  if (source === SOURCES.TRANSLATED) return automaticAllowed && preferences.allowTranslated === true;
+  return true;
+}
+
 function bestRank(tracks) {
   return tracks.reduce((best, track) => Math.max(best, SOURCE_RANK[track.source] ?? 0), -1);
 }
@@ -149,7 +162,7 @@ function assessCoverage({ preferences, offered, onDisk }) {
   const upgrades = [];
   for (const entry of parseSubtitleLanguages(preferences.subtitleLanguage)) {
     if (!isPlainLanguageCode(entry)) continue;
-    const present = (onDisk || []).filter((track) => matchesEntry(entry, track.code));
+    const present = (onDisk || []).filter((track) => matchesEntry(entry, track.code) && isSourceAllowed(preferences, track.source));
     const selected = selection.tracks.filter((track) => track.language === entry);
     if (!present.length) {
       const unavailable = selection.missing.find((item) => item.language === entry);
@@ -168,6 +181,7 @@ module.exports = {
   SOURCE_POLICIES,
   DEFAULT_SOURCE_POLICY,
   MISSING_REASONS,
+  isSourceAllowed,
   preferencesFromConfig,
   selectPublishableTracks,
   matchesEntry,

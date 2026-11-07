@@ -66,4 +66,31 @@ describe('assessCoverage', () => {
     });
     expect(result.upgrades).toEqual([{ language: 'en', code: 'en-GB', source: 'uploaded' }]);
   });
+
+  test('an existing automatic track does not cover a language under uploaded-only', () => {
+    const result = assessCoverage({
+      preferences: prefs({ captionSourcePolicy: 'uploaded-only' }),
+      offered: [{ code: 'en', source: 'automatic' }],
+      onDisk: [{ code: 'en', source: 'automatic' }],
+    });
+    expect(result.missing).toEqual([{ language: 'en', reason: 'automatic-not-allowed' }]);
+  });
+
+  test('an existing machine translation does not cover a language while translations are disabled', () => {
+    const result = assessCoverage({
+      preferences: prefs({ subtitleLanguage: 'nb' }),
+      offered: [{ code: 'nb', source: 'translated' }],
+      onDisk: [{ code: 'nb', source: 'translated' }],
+    });
+    expect(result.missing).toEqual([{ language: 'nb', reason: 'translation-only' }]);
+  });
+
+  test('an existing machine translation covers a language while translations are allowed', () => {
+    const result = assessCoverage({
+      preferences: prefs({ subtitleLanguage: 'nb', captionAllowTranslated: true }),
+      offered: [{ code: 'nb', source: 'translated' }],
+      onDisk: [{ code: 'nb', source: 'translated' }],
+    });
+    expect(result.missing).toEqual([]);
+  });
 });

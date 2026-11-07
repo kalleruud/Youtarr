@@ -87,7 +87,7 @@ async function readIfPresent(filePath) {
  * and a rename, keeping the replaced track's bytes in the backup folder.
  * @returns {Promise<{backupPath: string|null, resultSha256: string}>}
  */
-async function installCaption({ targetPath, bytes, backupRoot, mediaRoot }) {
+async function installCaption({ targetPath, bytes, backupRoot, mediaRoot, beforeMutation = async () => null }) {
   await assertInsideMediaRoot(targetPath, mediaRoot);
   const realBackup = await prepareBackupRoot(backupRoot, mediaRoot);
   const previous = await readIfPresent(targetPath);
@@ -95,6 +95,11 @@ async function installCaption({ targetPath, bytes, backupRoot, mediaRoot }) {
   const temporaryPath = path.join(path.dirname(targetPath), `.caption-${crypto.randomBytes(16).toString('hex')}.tmp`);
   try {
     await fs.writeFile(temporaryPath, bytes, { flag: 'wx', mode: 0o644 });
+    const blocked = await beforeMutation();
+    if (blocked) {
+      await fs.unlink(temporaryPath);
+      return { blocked };
+    }
     await fs.rename(temporaryPath, targetPath);
   } catch (err) {
     await fs.unlink(temporaryPath).catch(() => {});
@@ -104,12 +109,14 @@ async function installCaption({ targetPath, bytes, backupRoot, mediaRoot }) {
 }
 
 /** Remove a superseded sidecar after keeping its bytes in the backup folder. */
-async function retireCaption({ targetPath, backupRoot, mediaRoot }) {
+async function retireCaption({ targetPath, backupRoot, mediaRoot, beforeMutation = async () => null }) {
   await assertInsideMediaRoot(targetPath, mediaRoot);
   const realBackup = await prepareBackupRoot(backupRoot, mediaRoot);
   const previous = await readIfPresent(targetPath);
   if (!previous) return { backupPath: null };
   const backupPath = await retainCaption(realBackup, previous);
+  const blocked = await beforeMutation();
+  if (blocked) return { blocked };
   await fs.unlink(targetPath);
   return { backupPath };
 }
