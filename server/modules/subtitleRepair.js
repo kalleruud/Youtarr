@@ -3,7 +3,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const { normalizeCaptionTrack } = require('./download/captionNormalizer');
-const { serializeSrt, retainCaption, replaceCaption, isWithin } = require('./download/captionPublication');
+const { serializeSrt, retainCaption, replaceCaption, isWithin, durableDirectory, durableReplace, syncPath } = require('./download/captionPublication');
 const MAX_TRACK_BYTES = 5 * 1024 * 1024;
 const MAX_BATCH = 100;
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -25,7 +25,7 @@ class SubtitleRepair {
         ancestor = path.dirname(ancestor);
       }
     }
-    await fs.mkdir(root, { recursive: true, mode: 0o700 });
+    await durableDirectory(root);
     const real = await fs.realpath(root);
     if (isWithin(media, real)) throw new Error('Repair state must be outside media root');
     return real;
@@ -34,11 +34,7 @@ class SubtitleRepair {
   async save(record) {
     const root = await this.directory();
     const file = path.join(root, `${record.id}.json`);
-    const temp = `${file}.${crypto.randomUUID()}.tmp`;
-    try {
-      await fs.writeFile(temp, JSON.stringify(record), { flag: 'wx', mode: 0o600 });
-      await fs.rename(temp, file);
-    } finally { await fs.unlink(temp).catch(() => {}); }
+    await durableReplace(file, JSON.stringify(record));
     this.notify?.();
   }
 
@@ -63,16 +59,32 @@ class SubtitleRepair {
     return fs.readFile(real);
   }
 
+  async mediaRevision(media) {
+    const stat = await fs.stat(media, { bigint: true });
+    if (!stat.isFile()) throw new Error('Media is not a regular file');
+    return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].map(String).join(':');
+  }
+
+  async validateMedia(item) {
+    const video = await this.resolveVideo(item.videoId);
+    if (video?.filePath !== item.media || video.removed || !item.mediaRevision ||
+        await this.mediaRevision(item.media) !== item.mediaRevision) throw new Error('Media revision changed; preview again');
+  }
+
   async previewRepair(videoIds, options = {}) {
     if (!Array.isArray(videoIds) || !videoIds.length || videoIds.length > MAX_BATCH || videoIds.some(id => !Number.isSafeInteger(id) || id <= 0)) throw Object.assign(new Error('Choose 1–100 numeric video ids'), { status: 400 });
     if (typeof options.automaticFinal !== 'boolean') throw Object.assign(new Error('Confirm caption provenance and final timeline'), { status: 400 });
     const record = { id: crypto.randomUUID(), kind: 'subtitle-repair', provenance: options.automaticFinal ? 'owner-confirmed-automatic-final' : 'unknown', createdAt: new Date().toISOString(), status: 'preview', items: [], warnings: ['Only confirm automatic captions already synchronized to the final media. Unknown/human or unverified cut timelines must be skipped.'] };
     for (const videoId of [...new Set(videoIds)]) {
+      let release;
       try {
+        const candidate = await this.resolveVideo(videoId);
+        release = await acquireCaptionLease(this.leaseRoot ? this.leaseRoot() : path.dirname(await this.directory()), candidate?.youtubeId || String(videoId));
         const video = await this.resolveVideo(videoId);
         if (!video?.filePath || video.removed) throw new Error('No downloaded video');
         const media = await fs.realpath(video.filePath);
         if (!isWithin(await fs.realpath(this.mediaRoot()), media)) throw new Error('Media outside configured root');
+        const mediaRevision = await this.mediaRevision(media);
         const base = path.basename(media, path.extname(media));
         const names = (await fs.readdir(path.dirname(media))).filter(name => name.startsWith(`${base}.`) && name.endsWith('.srt'));
         if (!names.length) record.items.push({ videoId, status: 'skipped', reason: 'No external SRT captions' });
@@ -83,10 +95,11 @@ class SubtitleRepair {
             const original = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
             const result = normalizeCaptionTrack({ rawTrack: original, format: 'srt', provenance: options.automaticFinal ? 'automatic' : 'unknown' });
             const output = result.diagnostics.transitionsRemoved ? serializeSrt(result.cues) : original;
-            record.items.push({ videoId, youtubeId: video.youtubeId || String(videoId), media, file, sourceHash: hash(bytes), resultHash: hash(Buffer.from(output)), output, normalizerVersion: result.normalizerVersion, changed: result.diagnostics.transitionsRemoved, examples: { before: original.slice(0, 1200), after: output.slice(0, 1200) }, status: options.automaticFinal ? 'pending' : 'skipped', reason: options.automaticFinal ? undefined : 'Provenance/timeline unconfirmed' });
+            record.items.push({ videoId, youtubeId: video.youtubeId || String(videoId), media, mediaRevision, file, sourceHash: hash(bytes), resultHash: hash(Buffer.from(output)), output, normalizerVersion: result.normalizerVersion, changed: result.diagnostics.transitionsRemoved, examples: { before: original.slice(0, 1200), after: output.slice(0, 1200) }, status: options.automaticFinal ? 'pending' : 'skipped', reason: options.automaticFinal ? undefined : 'Provenance/timeline unconfirmed' });
           } catch (err) { record.items.push({ videoId, status: 'failed', reason: err.message }); }
         }
       } catch (err) { record.items.push({ videoId, status: 'skipped', reason: err.message }); }
+      finally { await release?.(); }
     }
     await this.save(record);
     return record;
@@ -110,26 +123,37 @@ class SubtitleRepair {
       let release;
       try {
         release = await acquireCaptionLease(this.leaseRoot ? this.leaseRoot() : path.dirname(await this.directory()), item.youtubeId);
-        const video = await this.resolveVideo(item.videoId);
-        if (video?.filePath !== item.media || video.removed) throw new Error('Video record changed since preview');
+        if (this.cancelled === record.id) { item.status = 'skipped'; item.reason = 'Cancelled before publication'; await this.save(record); continue; }
+        await this.validateMedia(item);
         const bytes = await this.track(item.file);
         const version = normalizeCaptionTrack({ rawTrack: bytes.toString('utf8'), format: 'srt', provenance: 'automatic' }).normalizerVersion;
         if (hash(bytes) !== item.sourceHash || version !== item.normalizerVersion) throw new Error('Stale preview; preview again');
         if (!item.changed) { item.status = 'unchanged'; await this.save(record); continue; }
         item.backupPath = await retainCaption(await this.directory(), bytes);
+        if (this.cancelled === record.id) { item.status = 'skipped'; item.reason = 'Cancelled before publication'; await this.save(record); continue; }
+        await this.validateMedia(item);
         item.status = 'publishing';
         await this.save(record); // write-ahead: recovery distinguishes before/after rename by hash
-        await replaceCaption({ subtitlePath: item.file, bytes: Buffer.from(item.output), expectedHash: item.sourceHash });
+        if (this.cancelled === record.id) { item.status = 'skipped'; item.reason = 'Cancelled before publication'; await this.save(record); continue; }
+        await replaceCaption({ subtitlePath: item.file, bytes: Buffer.from(item.output), expectedHash: item.sourceHash, beforeCommit: async () => {
+          await this.validateMedia(item);
+          if (this.cancelled === record.id) throw Object.assign(new Error('Cancelled before publication'), { code: 'CAPTION_CANCELLED' });
+        } });
         item.status = 'repaired';
         await this.save(record);
         await release();
         release = null;
         item.refresh = await this.refreshItem(item.media);
-      } catch (err) { item.status = 'failed'; item.reason = err.message; }
+      } catch (err) {
+        if (err.code === 'CAPTION_CANCELLED') item.status = 'skipped';
+        else if (item.status === 'repaired') item.status = 'publishing';
+        else if (item.status !== 'publishing') item.status = 'failed';
+        item.reason = err.message;
+      }
       finally { await release?.(); }
       await this.save(record);
     }
-    record.status = this.cancelled === record.id ? 'cancelled' : 'completed';
+    record.status = record.items.some(item => item.status === 'publishing') ? 'running' : this.cancelled === record.id ? 'cancelled' : 'completed';
     this.cancelled = null;
     await this.save(record);
   }
@@ -148,12 +172,22 @@ class SubtitleRepair {
 
   async recover() {
     for (const record of await this.list()) {
-      if (record.status !== 'running') continue;
+      if (!['running', 'restoring'].includes(record.status)) continue;
       for (const item of record.items) {
-        if (item.status === 'publishing') {
-          try { item.status = hash(await this.track(item.file)) === item.resultHash ? 'repaired' : 'failed'; }
-          catch { item.status = 'failed'; }
-          item.reason = 'Interrupted publication; original retained';
+        if (['publishing', 'restoring'].includes(item.status)) {
+          let release;
+          try {
+            release = await acquireCaptionLease(this.leaseRoot ? this.leaseRoot() : path.dirname(await this.directory()), item.youtubeId);
+            await this.validateMedia(item);
+            const backup = await fs.readFile(path.join(await this.directory(), `${item.sourceHash}.srt`));
+            if (hash(backup) !== item.sourceHash) throw new Error('Original backup verification failed');
+            const current = hash(await this.track(item.file));
+            await syncPath(item.file);
+            await syncPath(path.dirname(item.file));
+            item.status = current === item.sourceHash ? (item.status === 'restoring' ? 'restored' : 'failed') : current === item.resultHash ? 'repaired' : 'failed';
+            item.reason = 'Interrupted transaction reconciled from disk; original retained';
+          } catch (err) { item.status = 'failed'; item.reason = err.message; }
+          finally { await release?.(); }
         } else if (item.status === 'pending') { item.status = 'skipped'; item.reason = 'Interrupted before publication; preview again'; }
       }
       record.status = 'interrupted';
@@ -166,25 +200,31 @@ class SubtitleRepair {
     this.active = id;
     try {
       const record = await this.get(id);
+      record.status = 'restoring';
+      await this.save(record);
       for (const item of record.items.filter(item => item.backupPath && item.status !== 'restored')) {
         let release;
         try {
           release = await acquireCaptionLease(this.leaseRoot ? this.leaseRoot() : path.dirname(await this.directory()), item.youtubeId);
-          const video = await this.resolveVideo(item.videoId);
-          if (video?.filePath !== item.media || video.removed) throw new Error('Video record changed since repair');
+          await this.validateMedia(item);
           const bytes = await fs.readFile(path.join(await this.directory(), `${item.sourceHash}.srt`));
           if (hash(bytes) !== item.sourceHash) throw new Error('Original backup verification failed');
           const current = hash(await this.track(item.file));
-          if (current !== item.sourceHash) await replaceCaption({ subtitlePath: item.file, bytes, expectedHash: item.resultHash });
+          item.status = 'restoring';
+          await this.save(record);
+          if (current !== item.sourceHash) await replaceCaption({ subtitlePath: item.file, bytes, expectedHash: item.resultHash, beforeCommit: () => this.validateMedia(item) });
+          await syncPath(item.file);
+          await syncPath(path.dirname(item.file));
           item.status = 'restored';
           delete item.reason;
           await this.save(record);
           await release();
           release = null;
           item.refresh = await this.refreshItem(item.media);
-        } catch (err) { item.reason = err.message; }
+        } catch (err) { if (item.status === 'restored') item.status = 'restoring'; item.reason = err.message; }
         finally { await release?.(); }
       }
+      record.status = record.items.some(item => item.status === 'restoring') ? 'restoring' : 'completed';
       await this.save(record);
       return record;
     } finally { this.active = null; }

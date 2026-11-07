@@ -21,15 +21,50 @@ function isWithin(parent, child) {
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
 
+// Fail closed if the filesystem cannot provide the required durability barriers.
+async function syncPath(file) {
+  const handle = await fs.open(file, 'r');
+  try { await handle.sync(); } finally { await handle.close(); }
+}
+
+async function durableDirectory(directory) {
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  // Sync every ancestor: recursive mkdir may have created more than one entry.
+  for (let current = path.resolve(directory);;) {
+    await syncPath(current);
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+}
+
+async function durableWrite(file, bytes, mode = 0o600) {
+  const handle = await fs.open(file, 'wx', mode);
+  try { await handle.writeFile(bytes); await handle.sync(); }
+  finally { await handle.close(); }
+}
+
+async function durableReplace(file, bytes) {
+  const temp = `${file}.${crypto.randomUUID()}.tmp`;
+  try {
+    await durableWrite(temp, bytes);
+    await fs.rename(temp, file);
+    await syncPath(path.dirname(file));
+  } finally { await fs.unlink(temp).catch(() => {}); }
+}
+
 async function retainCaption(realBackup, bytes) {
   const hash = crypto.createHash('sha256').update(bytes).digest('hex');
   const retainedPath = path.join(realBackup, `${hash}.srt`);
   try {
-    await fs.writeFile(retainedPath, bytes, { flag: 'wx', mode: 0o600 });
+    await durableWrite(retainedPath, bytes);
   } catch (err) {
     if (err.code !== 'EEXIST') throw err;
     if (!(await fs.readFile(retainedPath)).equals(bytes)) throw new Error('Caption backup content mismatch');
   }
+  if (!(await fs.readFile(retainedPath)).equals(bytes)) throw new Error('Caption backup content mismatch');
+  await syncPath(retainedPath);
+  await syncPath(realBackup);
   return retainedPath;
 }
 
@@ -62,7 +97,7 @@ async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance,
       }
     }
     if (isWithin(realMedia, path.join(ancestor, ...suffix))) throw new Error('Caption backup directory is inside media root');
-    await fs.mkdir(backupRoot, { recursive: true, mode: 0o700 });
+    await durableDirectory(backupRoot);
     const realBackup = await fs.realpath(backupRoot);
     if (isWithin(realMedia, realBackup)) throw new Error('Caption backup directory is inside media root');
     const backupPath = await retainCaption(realBackup, originalBytes);
@@ -75,21 +110,24 @@ async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance,
   }
 }
 
-async function replaceCaption({ subtitlePath, bytes, expectedHash }) {
+async function replaceCaption({ subtitlePath, bytes, expectedHash, beforeCommit }) {
   const current = await fs.readFile(subtitlePath);
   if (crypto.createHash('sha256').update(current).digest('hex') !== expectedHash) throw new Error('Caption changed since preview');
   const stat = await fs.stat(subtitlePath);
   const temporary = path.join(path.dirname(subtitlePath), `.caption-${crypto.randomUUID()}.tmp`);
   try {
-    await fs.writeFile(temporary, bytes, { flag: 'wx', mode: stat.mode & 0o777 });
+    await durableWrite(temporary, bytes, stat.mode & 0o777);
     await fs.chmod(temporary, stat.mode & 0o777);
     if (!(await fs.readFile(temporary)).equals(bytes)) throw new Error('Caption verification failed');
     const latest = await fs.readFile(subtitlePath);
     if (!latest.equals(current)) throw new Error('Caption changed during publication');
+    await syncPath(temporary);
+    await beforeCommit?.();
     await fs.rename(temporary, subtitlePath);
+    await syncPath(path.dirname(subtitlePath));
   } finally {
     await fs.unlink(temporary).catch(() => {});
   }
 }
 
-module.exports = { publishCaption, serializeSrt, retainCaption, replaceCaption, isWithin };
+module.exports = { publishCaption, serializeSrt, retainCaption, replaceCaption, isWithin, durableDirectory, durableReplace, syncPath };

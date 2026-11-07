@@ -17,3 +17,13 @@ All endpoints require `x-access-token`. `GET /api/subtitle-repairs` seeds the du
 ## Release checks still required
 
 Development uses synthetic tracks in temporary directories only. Repairing the owner's two affected videos, Jellyfin Web/JellySee recognition, natural reading and audio sync, live-library backup visibility, low-storage host checks and operational rollback rehearsal are manual and unperformed. Owner approval is required before production repair or deployment. Keep issue #4 open until those checks are recorded. Existing-caption provenance/timing confirmation is an explicit prerequisite.
+
+### Durability and revision boundaries
+
+Shared #3 publication helpers fsync retained originals, temporary replacement files and containing directories. Repair and restore fsync write-ahead journals before replacing a track, then sync the replacement directory before recording completion. Recursive state-directory creation syncs ancestors. Unsupported or failed sync operations fail closed before publication where possible; a failure after rename leaves an unresolved publishing/restoring intent for startup reconciliation against both caption hashes. Do not treat an unresolved transaction as a completed repair. Recovery acquires the shared lease and revalidates media before recording disk outcomes.
+
+Previews capture the media device, inode, size and nanosecond mtime/ctime under the publication lease; repair, restore and recovery compare that revision. This bounded metadata fingerprint avoids scanning multi-gigabyte media but is not a content hash or proof of timeline correctness. Ordinary replacements and writes invalidate it; privileged timestamp manipulation, filesystem identity reuse and external tools bypassing the lease remain limitations. The owner's timeline assertion is still required. Old previews without a revision must be recreated.
+
+For #5, durable byte replacement, original retention and the lease are reusable primitives. The current repair API only normalizes existing SRTs. A newly retrieved-track transaction still needs a reviewed interface for absent destinations, provenance/track identity, retrieval metadata, expected media revision and durable intent/recovery. Do not route enrichment through owner-confirmed repair or infer timeline validity from caption hashes. No full #5 implementation is included here.
+
+Fault-injection tests exercise sync ordering/failure and interrupted restore journaling with synthetic files. Actual power-loss, host storage and rollback tests remain unperformed, alongside all real-library and Jellyfin Web/JellySee recognition/reading/sync gates above. Related to #4; no issue closure or roadmap completion is claimed.

@@ -104,3 +104,38 @@ test('uses the pre-cut captions with the verified cut map', async () => {
   expect(output).not.toContain('removed');
   expect(output).toContain('00:00:02,200 --> 00:00:02,600\ntwo');
 });
+
+test('file sync failure prevents replacement and reports warning', async () => {
+  const open = fs.open.bind(fs);
+  const fault = jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    if (String(args[0]).endsWith('.srt') && args[1] === 'wx') {
+      handle.sync = async () => { throw new Error('sync failed'); };
+    }
+    return handle;
+  });
+  try {
+    expect((await publish()).status).toBe('warning');
+    expect(await fs.readFile(subtitlePath, 'utf8')).toBe(original);
+  } finally { fault.mockRestore(); }
+});
+
+test('original and replacement sync precede rename and parent sync follows it', async () => {
+  const events = [];
+  const open = fs.open.bind(fs);
+  const rename = fs.rename.bind(fs);
+  const opening = jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    const sync = handle.sync.bind(handle);
+    handle.sync = async () => { events.push(['sync', String(args[0])]); await sync(); };
+    return handle;
+  });
+  const renaming = jest.spyOn(fs, 'rename').mockImplementation(async (a, b) => { events.push(['rename', b]); await rename(a, b); });
+  try {
+    expect((await publish()).status).toBe('published');
+    const commit = events.findIndex(e => e[0] === 'rename');
+    expect(events.slice(0, commit).some(e => e[0] === 'sync' && e[1].endsWith('.srt'))).toBe(true);
+    expect(events.slice(0, commit).some(e => e[0] === 'sync' && e[1].endsWith('.tmp'))).toBe(true);
+    expect(events[commit + 1]).toEqual(['sync', mediaRoot]);
+  } finally { opening.mockRestore(); renaming.mockRestore(); }
+});

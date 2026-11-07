@@ -120,7 +120,81 @@ test('publication failure retains the original and durable failure result', asyn
   const fail = jest.spyOn(fs, 'rename').mockImplementation((source, target) => target === file ? Promise.reject(new Error('disk failure')) : originalRename(source, target));
   try {
     const record = await run();
-    expect(record.items[0].status).toBe('failed');
+    expect(record.items[0].status).toBe('publishing');
     expect(await fs.readFile(file, 'utf8')).toBe(original);
   } finally { fail.mockRestore(); }
+});
+
+test('same-path media replacement invalidates preview even with identical captions', async () => {
+  const record = await service.previewRepair([1], { automaticFinal: true });
+  await fs.writeFile(path.join(media, 'episode.mp4'), 'new timeline');
+  await service.run(record);
+  expect(record.items[0].reason).toMatch('Media revision changed');
+  expect(await fs.readFile(file, 'utf8')).toBe(original);
+});
+
+test('restore rejects a newer media revision', async () => {
+  const record = await run();
+  const repaired = await fs.readFile(file);
+  await fs.writeFile(path.join(media, 'episode.mp4'), 'new timeline');
+  const restored = await service.restoreRepair(record.id);
+  expect(restored.items[0].reason).toMatch('Media revision changed');
+  expect(await fs.readFile(file)).toEqual(repaired);
+});
+
+test('cancellation during lease wait leaves the queued track intact', async () => {
+  const { acquireCaptionLease } = require('../download/captionLease');
+  const record = await service.previewRepair([1], { automaticFinal: true });
+  const release = await acquireCaptionLease(root, '1');
+  const running = service.run(record);
+  service.cancelled = record.id;
+  await release();
+  await running;
+  expect(record.items[0].status).toBe('skipped');
+  expect(await fs.readFile(file, 'utf8')).toBe(original);
+});
+
+test('restart reconciles restore replacement after completion journal failure', async () => {
+  const record = await run();
+  const save = service.save.bind(service);
+  const failure = jest.spyOn(service, 'save').mockImplementation(r => {
+    if (r.items[0].status === 'restored') return Promise.reject(new Error('journal offline'));
+    return save(r);
+  });
+  await service.restoreRepair(record.id);
+  failure.mockRestore();
+  const fresh = new SubtitleRepair().configure(service);
+  await fresh.recover();
+  expect((await fresh.get(record.id)).items[0].status).toBe('restored');
+  expect(await fs.readFile(file, 'utf8')).toBe(original);
+});
+
+test('write-ahead journal failure prevents caption replacement', async () => {
+  const record = await service.previewRepair([1], { automaticFinal: true });
+  const rename = fs.rename.bind(fs);
+  const fault = jest.spyOn(fs, 'rename').mockImplementation(async (source, target) => {
+    if (target.endsWith('.json')) throw new Error('journal unavailable');
+    return rename(source, target);
+  });
+  try {
+    await expect(service.run(record)).rejects.toThrow('journal unavailable');
+    expect(await fs.readFile(file, 'utf8')).toBe(original);
+    expect(await fs.readFile(record.items[0].backupPath, 'utf8')).toBe(original);
+  } finally { fault.mockRestore(); }
+});
+
+test('parent sync failure after restore rename leaves recoverable intent', async () => {
+  const record = await run();
+  const open = fs.open.bind(fs);
+  const fault = jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    if (String(args[0]) === media) handle.sync = async () => { throw new Error('directory sync failed'); };
+    return handle;
+  });
+  await service.restoreRepair(record.id);
+  fault.mockRestore();
+  expect((await service.get(record.id)).items[0].status).toBe('restoring');
+  await service.recover();
+  expect((await service.get(record.id)).items[0].status).toBe('restored');
+  expect(await fs.readFile(file, 'utf8')).toBe(original);
 });
