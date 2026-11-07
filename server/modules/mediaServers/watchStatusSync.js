@@ -11,6 +11,9 @@ const {
   WatchStateFetchError,
 } = require('./adapters/baseAdapter');
 const { Video, VideoWatchStatus, MediaServerUser, WatchStatusSyncCursor } = require('../../models');
+const representationStore = require('../representation/representationStore');
+const watchContinuity = require('../representation/watchContinuity');
+const playlistOutputRefresh = require('../playlistOutputRefresh');
 
 // Rows per bulk upsert statement; keeps a 10k-video library from producing one
 // giant INSERT.
@@ -129,22 +132,29 @@ class WatchStatusSync {
       // Missing (removed) videos are candidates too: the file may have moved
       // out of Youtarr's view but still exist on a media server and keep
       // accruing watch state.
-      const videos = await Video.findAll({
-        where: { filePath: { [Op.ne]: null } },
-        attributes: ['id', 'youtubeId', 'filePath', 'removed'],
-        raw: true,
-      });
+      const { videos, streamedVideoIds } = await this._loadCandidateVideos();
       logger.info({ trigger, videoCount: videos.length, serverCount: adapters.length }, 'Starting watch status sync');
 
       // Across servers, so a video on two servers counts once.
       const changedIds = new Set();
+      const restoredYoutubeIds = new Set();
       for (const adapter of adapters) {
         const serverType = adapter.serverType;
         try {
+          // Watch state carried over from an episode's previous file is
+          // restored first, so the listing below already includes it.
+          const continuity = await this._prepareContinuity(adapter, streamedVideoIds);
+          continuity.restoredYoutubeIds.forEach((id) => restoredYoutubeIds.add(id));
           const opts = serverType === 'plex' ? await this._plexFetchOpts() : {};
           const { entries, users, historyCursor, completeUserIds } = await adapter.fetchWatchStates(opts);
           const listed = this._matchVideos(videos, entries, { requireCurrentCopy: !!completeUserIds });
-          const cleared = await this._clearedMatches(serverType, completeUserIds, videos, listed);
+          await watchContinuity.settleListed(continuity, listed)
+            .catch((err) => logger.warn({ err, serverType }, 'Could not settle carried-over watch state'));
+          // Rows whose watch state is still being carried over to a new
+          // server item are never reset: the server shows the new item as
+          // unwatched only because it is new.
+          const cleared = continuity.holdAllResets ? [] : (await this._clearedMatches(serverType, completeUserIds, videos, listed))
+            .filter(({ video, entry }) => !continuity.held.has(watchContinuity.rowKey(video.id, entry.serverUserId)));
           const matches = listed.concat(cleared);
           const { rowsWritten, changedVideoIds } = await this._persist(serverType, matches);
           // Advance the durable cursor only after rows persisted, and only
@@ -183,6 +193,11 @@ class WatchStatusSync {
         }
       }
       summary.totals = { changed: changedIds.size };
+      // The restored items exist on the server now, so playlists that hold
+      // them can be resolved to the new items.
+      if (restoredYoutubeIds.size > 0) {
+        playlistOutputRefresh.refreshForVideosInBackground([...restoredYoutubeIds], 'watch state carried over to a new item');
+      }
       return summary;
     } catch (err) {
       const logErr = err && err.isAxiosError ? describeHttpError(err) : err;
@@ -193,6 +208,67 @@ class WatchStatusSync {
       summary.completedAt = new Date().toISOString();
       this._lastRun = summary;
       this._running = false;
+    }
+  }
+
+  // Videos with a file, plus videos whose only visible entry is a published
+  // STRM entry (#13/#14): those are matched at the STRM location, so their
+  // watch state is stored before a download replaces the entry. One query
+  // over the STRM records also says which videos can have carried-over watch
+  // state at all (streamedVideoIds; null when it could not be read, which
+  // holds every reset back, see _prepareContinuity).
+  async _loadCandidateVideos() {
+    let streams = null;
+    try {
+      streams = await representationStore.listStreamEntries();
+    } catch (err) {
+      logger.warn({ err }, 'Could not read published STRM entries; syncing downloaded files only, without resetting stored watch state');
+    }
+    const streamLocations = streams ? streams.published : new Map();
+    const hasFile = { filePath: { [Op.ne]: null } };
+    const rows = await Video.findAll({
+      where: streamLocations.size > 0
+        ? { [Op.or]: [hasFile, { youtubeId: { [Op.in]: [...streamLocations.keys()] } }] }
+        : hasFile,
+      attributes: ['id', 'youtubeId', 'filePath', 'removed'],
+      raw: true,
+    });
+    const videos = rows.map((video) => {
+      const streamLocation = streamLocations.get(video.youtubeId);
+      if (!streamLocation || (video.filePath && !video.removed)) return video;
+      return { ...video, filePath: streamLocation, removed: false };
+    });
+    const streamedVideoIds = streams
+      ? new Set(videos.filter((video) => streams.youtubeIds.has(video.youtubeId)).map((video) => video.id))
+      : null;
+    return { videos, streamedVideoIds };
+  }
+
+  // Carried-over watch state (see representation/watchContinuity). Carryovers
+  // are only ever recorded for videos with a STRM record, so when the STRM
+  // records were read and there are none, nothing is held and nothing is
+  // queried: the sync behaves exactly as it did before representations
+  // existed. An unreachable server skips the server as usual. Fails closed:
+  // when the STRM records or the carryovers cannot be read, no stored watch
+  // state is reset on this server this sync (holdAllResets); what the server
+  // lists is still written. Nothing is lost by that: resets are derived anew
+  // on every sync.
+  async _prepareContinuity(adapter, streamedVideoIds) {
+    if (streamedVideoIds && streamedVideoIds.size === 0) {
+      return { held: new Set(), restoredYoutubeIds: [], carryovers: [], holdAllResets: false };
+    }
+    try {
+      const prepared = await watchContinuity.prepareServer(adapter);
+      if (!streamedVideoIds) {
+        logger.warn({ serverType: adapter.serverType },
+          'STRM records could not be read; not resetting stored watch state on this server this sync');
+      }
+      return { ...prepared, holdAllResets: !streamedVideoIds };
+    } catch (err) {
+      if (err instanceof MediaServerUnavailableError) throw err;
+      logger.warn({ err, serverType: adapter.serverType },
+        'Could not read carried-over watch state; not resetting stored watch state on this server this sync');
+      return { held: new Set(), restoredYoutubeIds: [], carryovers: [], holdAllResets: true };
     }
   }
 

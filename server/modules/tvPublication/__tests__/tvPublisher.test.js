@@ -136,4 +136,69 @@ describe('tvPublisher', () => {
   test('findShowFolderName returns null for a missing library folder', async () => {
     expect(await tvPublisher.findShowFolderName(path.join(root, 'nope'), CHANNEL)).toBeNull();
   });
+
+  describe('streamed episode entries (#14)', () => {
+    const seasonDir = () => path.join(library, `Show [${CHANNEL}]`, 'Season 2026');
+    const streamStem = `Show - S2026E001 - Old Title [${ID}]`;
+
+    async function publishStreamFixture() {
+      await fs.outputFile(path.join(seasonDir(), `${streamStem}.strm`), 'http://youtarr/play/x');
+      await fs.outputFile(path.join(seasonDir(), `${streamStem}.nfo`), '<episodedetails><dateadded>2026-01-06 08:00:00</dateadded></episodedetails>');
+      await fs.outputFile(path.join(seasonDir(), `${streamStem}.en.srt`), '1\n00:00:00,000 --> 00:00:01,000\nhi\n');
+    }
+
+    test('findExistingEpisode returns a STRM entry so a download keeps its stem', async () => {
+      await publishStreamFixture();
+      expect(await tvPublisher.findExistingEpisode(seasonDir(), ID)).toEqual({
+        stem: streamStem, mediaName: `${streamStem}.strm`, dateAdded: '2026-01-06 08:00:00',
+      });
+    });
+
+    test('findExistingEpisode prefers a media file over a STRM entry', async () => {
+      await publishStreamFixture();
+      await fs.outputFile(path.join(seasonDir(), `${streamStem}.mp4`), 'media');
+      expect((await tvPublisher.findExistingEpisode(seasonDir(), ID)).mediaName).toBe(`${streamStem}.mp4`);
+    });
+
+    test('a download published under the STRM stem leaves one visible episode entry', async () => {
+      await publishStreamFixture();
+      const existing = await tvPublisher.findExistingEpisode(seasonDir(), ID);
+      const assets = await downloadFixture();
+      await tvPublisher.publish(plan(assets, {
+        layout: { parentDir: library, showFolderName: `Show [${CHANNEL}]`, existingStem: existing.stem, dateAdded: existing.dateAdded },
+      }));
+      const entries = (await fs.readdir(seasonDir())).filter((name) => /\.(mp4|strm)$/.test(name));
+      expect(entries).toEqual([`${streamStem}.mp4`]);
+    });
+
+    test('keeps the STRM entry when asked to, while its watch state is not recorded', async () => {
+      await publishStreamFixture();
+      const assets = await downloadFixture();
+      await tvPublisher.publish(plan(assets, {
+        layout: { parentDir: library, showFolderName: `Show [${CHANNEL}]`, existingStem: streamStem },
+      }), { keepStreamEntries: true });
+      const entries = (await fs.readdir(seasonDir())).filter((name) => /\.(mp4|strm)$/.test(name)).sort();
+      expect(entries).toEqual([`${streamStem}.mp4`, `${streamStem}.strm`]);
+    });
+
+    test('a failed download publication leaves the STRM entry in place', async () => {
+      await publishStreamFixture();
+      const assets = await downloadFixture();
+      const failing = plan(assets, { layout: { parentDir: library, showFolderName: `Show [${CHANNEL}]`, existingStem: streamStem } });
+      failing.sidecars.push({ role: 'subtitle', source: path.join(tempDir, 'missing.en.srt'), target: path.join(seasonDir(), `${streamStem}.de.srt`) });
+      await expect(tvPublisher.publish(failing)).rejects.toThrow();
+      expect([await fs.pathExists(path.join(seasonDir(), `${streamStem}.strm`)), await fs.pathExists(assets.media)]).toEqual([true, true]);
+    });
+
+    test('a STRM publication never removes a local media file', async () => {
+      const mediaStem = `Show - S2026E001 - First [${ID}]`;
+      await fs.outputFile(path.join(seasonDir(), `${mediaStem}.mp4`), 'media');
+      const strmSource = path.join(tempDir, `${mediaStem}.strm`);
+      await fs.outputFile(strmSource, 'http://youtarr/play/x');
+      await tvPublisher.publish(plan({ media: strmSource, subtitles: [], thumbnail: null }, {
+        layout: { parentDir: library, showFolderName: `Show [${CHANNEL}]`, existingStem: mediaStem },
+      }));
+      expect(await fs.pathExists(path.join(seasonDir(), `${mediaStem}.mp4`))).toBe(true);
+    });
+  });
 });

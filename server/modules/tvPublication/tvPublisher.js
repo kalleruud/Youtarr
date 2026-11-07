@@ -14,6 +14,9 @@ const { showNameFromFolder } = require('./tvNaming');
 const { THUMBNAIL_SUFFIX, SUBTITLE_EXTENSIONS } = require('./tvPlanner');
 
 const STAGING_PREFIX = '.youtarr-partial-';
+// A STRM entry (#13) is the episode's visible file while it is only
+// streamable; a downloaded media file replaces it under the same stem (#14).
+const STREAM_ENTRY_EXTENSION = '.strm';
 // Staging names are random and ours, so a retry may replace a partial copy.
 const MOVE_RETRY = { retries: 5, delayMs: 500, overwrite: true };
 const DATE_ADDED_PATTERN = /<dateadded>([^<]{1,40})<\/dateadded>/;
@@ -86,16 +89,27 @@ async function findShowFolderName(parentDir, channelId) {
   return null;
 }
 
+function isMediaName(name) {
+  return VIDEO_EXTENSIONS.includes(path.extname(name).toLowerCase());
+}
+
+function isStreamEntryName(name) {
+  return path.extname(name).toLowerCase() === STREAM_ENTRY_EXTENSION;
+}
+
 /**
  * The already-published episode for youtubeId in seasonDir: its stem and the
  * dateadded its NFO recorded (so a republish keeps the media server's "date
- * added"). Null when nothing is published there yet.
+ * added"). A media file wins over a STRM entry; a STRM entry counts too, so a
+ * download replacing it keeps its stem. Null when nothing is published there yet.
  */
 async function findExistingEpisode(seasonDir, youtubeId) {
-  const media = (await readdirSafe(seasonDir))
-    .filter((name) => !isStagingFile(name) && isFileForVideo(name, youtubeId))
-    .filter((name) => VIDEO_EXTENSIONS.includes(path.extname(name).toLowerCase()))
-    .sort();
+  const candidates = (await readdirSafe(seasonDir))
+    .filter((name) => !isStagingFile(name) && isFileForVideo(name, youtubeId));
+  const media = [
+    ...candidates.filter(isMediaName).sort(),
+    ...candidates.filter(isStreamEntryName).sort(),
+  ];
   if (media.length === 0) return null;
   const stem = path.parse(media[0]).name;
   let dateAdded = null;
@@ -134,12 +148,21 @@ async function collectAssets(mediaPath, { thumbnailNames = ['.jpg'] } = {}) {
   };
 }
 
-async function removeStaleEpisodeFiles(plan) {
+// After the media landed: files of the episode under an older stem, and other
+// media/STRM files under this stem, are stale. A STRM publication never
+// removes a media file: a local copy is only ever removed on purpose. With
+// keepStreamEntries, STRM entries stay too: their watch state could not be
+// recorded yet, so the representation facade removes them later (#14).
+async function removeStaleEpisodeFiles(plan, { keepStreamEntries = false } = {}) {
   const removed = [];
+  const publishingStream = isStreamEntryName(plan.media.target);
   for (const name of await readdirSafe(plan.seasonDir)) {
     if (isStagingFile(name) || !isFileForVideo(name, plan.youtubeId)) continue;
+    if (publishingStream && isMediaName(name)) continue;
+    if (keepStreamEntries && isStreamEntryName(name)) continue;
     if (name.startsWith(`${plan.stem}.`)) {
-      if (!VIDEO_EXTENSIONS.includes(path.extname(name).toLowerCase()) || name === path.basename(plan.media.target)) continue;
+      const isEntry = isMediaName(name) || isStreamEntryName(name);
+      if (!isEntry || name === path.basename(plan.media.target)) continue;
     }
     if (name === `${plan.stem}${THUMBNAIL_SUFFIX}`) continue;
     const stalePath = path.join(plan.seasonDir, name);
@@ -157,9 +180,11 @@ async function removeStaleEpisodeFiles(plan) {
  * Publish a plan. Sources that already are their target (a metadata-only
  * republish) are left in place. On failure, staging files are removed and a
  * staged media file is moved back to its source, then the error is rethrown.
+ * @param {Object} plan
+ * @param {{keepStreamEntries?: boolean}} [options] - leave the episode's STRM entries in place
  * @returns {Promise<{mediaPath: string, written: string[], removed: string[]}>}
  */
-async function publish(plan) {
+async function publish(plan, { keepStreamEntries = false } = {}) {
   await fs.ensureDir(plan.seasonDir);
   const written = [];
   const mediaInPlace = path.resolve(plan.media.source) === path.resolve(plan.media.target);
@@ -203,12 +228,13 @@ async function publish(plan) {
       logger.warn({ err, source: sidecar.source }, 'Could not remove a published sidecar source');
     });
   }
-  const removed = await removeStaleEpisodeFiles(plan);
+  const removed = await removeStaleEpisodeFiles(plan, { keepStreamEntries });
   return { mediaPath: plan.media.target, written, removed };
 }
 
 module.exports = {
   STAGING_PREFIX,
+  STREAM_ENTRY_EXTENSION,
   publish,
   findShowFolderName,
   findExistingEpisode,

@@ -96,6 +96,18 @@ const mockTvPublication = {
 
 jest.mock('../tvPublication', () => mockTvPublication);
 
+const mockRepresentations = {
+  publishDownloadedEpisode: jest.fn(),
+  promoteDownloadedAsset: jest.fn(),
+};
+function resetMockRepresentations() {
+  mockRepresentations.publishDownloadedEpisode.mockImplementation((id, { publish }) => publish({ keepStreamEntries: false }));
+  mockRepresentations.promoteDownloadedAsset.mockResolvedValue({ changed: true, retiredStream: false, carryovers: 0 });
+}
+resetMockRepresentations();
+
+jest.mock('../representation', () => mockRepresentations);
+
 jest.mock('../channelArtworkModule', () => ({
   isEnabled: jest.fn(() => false), syncChannel: jest.fn().mockResolvedValue(),
 }));
@@ -884,6 +896,24 @@ describe('videoDownloadPostProcessFiles', () => {
 
         expect(fs.remove).not.toHaveBeenCalledWith(expect.stringMatching(/\.srt$/));
       });
+    });
+
+    it('records the moved file as the local copy of the episode', async () => {
+      process.argv = ['node', 'script', tempVideoPath];
+      tempPathManager.isEnabled.mockReturnValue(true);
+      tempPathManager.isTempPath.mockReturnValue(true);
+      tempPathManager.convertTempToFinal.mockImplementation((path) => path.replace('/tmp/youtarr-downloads', '/library'));
+      const tempJsonPath = '/tmp/youtarr-downloads/Channel/Video Title [abc123].info.json';
+      fs.existsSync.mockImplementation((path) => path === tempJsonPath || path === finalVideoPath);
+      fs.pathExists.mockResolvedValue(false);
+      resetMockRepresentations();
+
+      await loadModule();
+      await settleAsync();
+
+      expect(mockRepresentations.promoteDownloadedAsset).toHaveBeenCalledWith(
+        'abc123', { location: expect.stringContaining('/library/Channel') }
+      );
     });
 
     it('successfully moves files from temp to final location', async () => {
@@ -2207,6 +2237,7 @@ describe('videoDownloadPostProcessFiles', () => {
     };
 
     beforeEach(() => {
+      resetMockRepresentations();
       configModule.__setConfig({ writeChannelPosters: false, writeVideoNfoFiles: true, libraryOutputProfile: 'jellyfinTv' });
       mockTvPublication.isEnabled.mockReturnValue(true);
       mockTvPublication.prepareDownload.mockResolvedValue(prepared);
@@ -2280,6 +2311,36 @@ describe('videoDownloadPostProcessFiles', () => {
       await loadModule();
       await settleAsync(10);
       expect(process.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('publishes through the episode representations at the planned path', async () => {
+      await loadModule();
+      await settleAsync(10);
+      expect(mockRepresentations.publishDownloadedEpisode).toHaveBeenCalledWith(
+        'abc123', { plannedLocation: episodePath, publish: expect.any(Function) }
+      );
+    });
+
+    it('passes the STRM decision on to the TV publisher', async () => {
+      mockRepresentations.publishDownloadedEpisode.mockImplementation((id, { publish }) => publish({ keepStreamEntries: true }));
+      await loadModule();
+      await settleAsync(10);
+      expect(mockTvPublication.publishDownload).toHaveBeenCalledWith(prepared, { keepStreamEntries: true });
+    });
+
+    it('does not promote the TV episode a second time after publication', async () => {
+      await loadModule();
+      await settleAsync(10);
+      expect(mockRepresentations.promoteDownloadedAsset).not.toHaveBeenCalled();
+    });
+
+    it('still completes the download when the episode publication returns its file', async () => {
+      await loadModule();
+      await settleAsync(10);
+      expect(JobVideoDownload.update).toHaveBeenCalledWith(
+        { status: 'completed', file_path: episodePath },
+        expect.any(Object)
+      );
     });
 
     it('never publishes MP3 downloads as episodes', async () => {

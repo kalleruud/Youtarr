@@ -2,6 +2,8 @@ const axios = require('axios');
 const BaseAdapter = require('./baseAdapter');
 const {
   extractBasename,
+  pathSegments,
+  trailingSegmentMatch,
   normalizeBaseUrl,
   REQUEST_TIMEOUT_MS,
   isServerUnavailableError,
@@ -232,6 +234,90 @@ class JellyfinAdapter extends BaseAdapter {
       percentWatched,
       lastWatchedAt: ud.LastPlayedDate ? new Date(ud.LastPlayedDate) : null,
     };
+  }
+
+  // Carry watch state over to the item a replaced episode file became
+  // (issue #14; see representation/watchContinuity). Each request is
+  // { key, path, serverUserId, state }; resolves Map<key, { status, message? }>
+  // with status 'restored', 'superseded' (the user already has state on the
+  // new item, which wins), 'not-found' (not scanned yet) or 'error'. One item
+  // listing serves every request. Throws MediaServerUnavailableError when the
+  // server cannot be reached.
+  async restoreWatchStates(requests) {
+    const results = new Map();
+    if (!requests || requests.length === 0) return results;
+    let items;
+    try {
+      const params = {
+        userId: this.userId,
+        includeItemTypes: 'Video,Movie,Episode',
+        collapseBoxSetItems: false,
+        recursive: true,
+        fields: 'Path',
+      };
+      const res = await axios.get(`${this.url}/Items`, { headers: this._headers(), params, timeout: REQUEST_TIMEOUT_MS });
+      items = res.data?.Items || [];
+    } catch (err) {
+      if (isServerUnavailableError(err)) throw new MediaServerUnavailableError(describeHttpError(err));
+      throw err;
+    }
+    const byBasename = new Map();
+    for (const item of items) {
+      const base = item.Path && extractBasename(item.Path);
+      if (!base) continue;
+      if (!byBasename.has(base)) byBasename.set(base, []);
+      byBasename.get(base).push(item);
+    }
+    for (const request of requests) {
+      const candidates = byBasename.get(extractBasename(request.path)) || [];
+      if (candidates.length === 0) {
+        results.set(request.key, { status: 'not-found' });
+        continue;
+      }
+      const target = pathSegments(request.path);
+      const item = candidates.reduce((best, candidate) => (
+        trailingSegmentMatch(target, pathSegments(candidate.Path)) > trailingSegmentMatch(target, pathSegments(best.Path))
+          ? candidate : best));
+      try {
+        results.set(request.key, await this._restoreItemWatchState(item.Id, request.serverUserId, request.state));
+      } catch (err) {
+        if (isServerUnavailableError(err)) throw new MediaServerUnavailableError(describeHttpError(err));
+        const details = describeHttpError(err);
+        logger.warn({ ...details, itemId: item.Id }, 'jellyfin: could not restore watch state');
+        results.set(request.key, { status: 'error', message: details.status ? `request failed (HTTP ${details.status})` : 'request failed' });
+      }
+    }
+    return results;
+  }
+
+  // Jellyfin 10.9+ serves user data at /UserItems/{id}/UserData?userId=;
+  // earlier versions at /Users/{userId}/Items/{id}[/UserData]. A 404 from the
+  // first falls back to the second.
+  async _withUserDataRoute(itemId, userId, current, legacy) {
+    try {
+      return await current(`${this.url}/UserItems/${encodeURIComponent(itemId)}/UserData`, { userId });
+    } catch (err) {
+      if (err.response?.status !== 404) throw err;
+      return legacy(`${this.url}/Users/${encodeURIComponent(userId)}/Items/${encodeURIComponent(itemId)}`);
+    }
+  }
+
+  async _restoreItemWatchState(itemId, userId, state) {
+    const config = { headers: this._headers(), timeout: REQUEST_TIMEOUT_MS };
+    const existing = await this._withUserDataRoute(itemId, userId,
+      async (url, params) => (await axios.get(url, { ...config, params })).data,
+      async (url) => (await axios.get(url, config)).data?.UserData);
+    if (existing && (existing.Played || Number(existing.PlaybackPositionTicks) > 0)) return { status: 'superseded' };
+    const body = {
+      Played: !!state.played,
+      PlayCount: state.playCount || 0,
+      PlaybackPositionTicks: state.played || !state.positionMs ? 0 : Math.round(state.positionMs * TICKS_PER_MS),
+    };
+    if (state.lastWatchedAt) body.LastPlayedDate = new Date(state.lastWatchedAt).toISOString();
+    await this._withUserDataRoute(itemId, userId,
+      (url, params) => axios.post(url, body, { ...config, params }),
+      (url) => axios.post(`${url}/UserData`, body, config));
+    return { status: 'restored' };
   }
 
   async createPlaylist(name, itemIds, opts = {}) {

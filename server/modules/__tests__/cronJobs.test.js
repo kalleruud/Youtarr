@@ -11,6 +11,7 @@ describe('CronJobs', () => {
   let mockConfigModule;
   let mockConfigStore;
   let mockTabVideoCounts;
+  let mockRepresentations;
 
   beforeEach(() => {
     jest.resetModules();
@@ -87,6 +88,9 @@ describe('CronJobs', () => {
       getBulkRunBlocker: jest.fn().mockResolvedValue(null)
     };
     jest.doMock('../channel/tabVideoCounts', () => mockTabVideoCounts);
+
+    mockRepresentations = { reconcileDuplicateEntries: jest.fn().mockResolvedValue({ candidates: 0 }) };
+    jest.doMock('../representation', () => mockRepresentations);
 
     // Mock configModule with a tiny in-memory store so the auto-update job can read/write
     mockConfigStore = { autoUpdateYtdlp: true };
@@ -478,6 +482,23 @@ describe('CronJobs', () => {
       await outcome.completion;
 
       expect(mockVideosModule.backfillVideoMetadata).toHaveBeenCalledWith({ trigger: 'manual', ignoreLibraryCheck: true });
+    });
+
+    test('reconciles episodes with a STRM entry and a local copy after the rescan', async () => {
+      mockVideosModule.backfillVideoMetadata.mockResolvedValue({ timedOut: false });
+
+      await backfillCallback();
+
+      expect(mockRepresentations.reconcileDuplicateEntries).toHaveBeenCalledTimes(1);
+    });
+
+    test('a failed reconcile pass does not fail the rescan', async () => {
+      mockVideosModule.backfillVideoMetadata.mockResolvedValue({ timedOut: false });
+      mockRepresentations.reconcileDuplicateEntries.mockRejectedValue(new Error('db down'));
+
+      await backfillCallback();
+
+      expect(mockLogger.error).not.toHaveBeenCalledWith(expect.anything(), 'Video metadata backfill failed');
     });
 
     test('should log success when backfill completes without timeout', async () => {

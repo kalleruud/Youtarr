@@ -9,6 +9,7 @@ const resolvedFetch = (entries, users = []) => jest.fn().mockResolvedValue({ ent
 describe('watchStatusSync', () => {
   let watchStatusSync;
   let serverRegistry, configModule, logger, Video, VideoWatchStatus, MediaServerUser, WatchStatusSyncCursor;
+  let representationStore, watchContinuity, playlistOutputRefresh;
 
   beforeEach(() => {
     jest.resetModules();
@@ -31,7 +32,20 @@ describe('watchStatusSync', () => {
       },
     }));
 
+    jest.doMock('../../representation/representationStore', () => ({
+      listStreamEntries: jest.fn().mockResolvedValue({ published: new Map(), youtubeIds: new Set() }),
+    }));
+    jest.doMock('../../representation/watchContinuity', () => ({
+      prepareServer: jest.fn().mockResolvedValue({ held: new Set(), restoredYoutubeIds: [], carryovers: [] }),
+      settleListed: jest.fn().mockResolvedValue(),
+      rowKey: (videoId, serverUserId) => `${videoId}:${serverUserId}`,
+    }));
+    jest.doMock('../../playlistOutputRefresh', () => ({ refreshForVideosInBackground: jest.fn() }));
+
     watchStatusSync = require('../watchStatusSync');
+    representationStore = require('../../representation/representationStore');
+    watchContinuity = require('../../representation/watchContinuity');
+    playlistOutputRefresh = require('../../playlistOutputRefresh');
     serverRegistry = require('../serverRegistry');
     configModule = require('../../configModule');
     logger = require('../../../logger');
@@ -425,6 +439,115 @@ describe('watchStatusSync', () => {
       expect(VideoWatchStatus.bulkCreate).not.toHaveBeenCalled();
     });
 
+    // id1 had a STRM entry, so it may have carried-over watch state.
+    const streamedRecords = (youtubeIds = ['id1']) => representationStore.listStreamEntries
+      .mockResolvedValue({ published: new Map(), youtubeIds: new Set(youtubeIds) });
+
+    test('reads no carried-over watch state when no video ever had a STRM entry', async () => {
+      await syncCompleteUser({ stateRows: [{ video_id: 7, server_user_id: 'u1' }] });
+
+      expect([watchContinuity.prepareServer.mock.calls.length, writtenRows()])
+        .toEqual([0, [expect.objectContaining({ video_id: 7, played: false })]]);
+    });
+
+    test('resets no stored watch state on the server when carried-over watch state cannot be read', async () => {
+      streamedRecords(['id1']);
+      watchContinuity.prepareServer.mockRejectedValue(new Error('connection reset'));
+      const other = { id: 8, youtubeId: 'id2', filePath: '/data/Chan/Video B [id2].mp4' };
+
+      await syncCompleteUser({
+        videos: [video, other],
+        stateRows: [{ video_id: 7, server_user_id: 'u1' }, { video_id: 8, server_user_id: 'u1' }],
+      });
+
+      expect(VideoWatchStatus.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    test('resets nothing when neither the STRM records nor the carried-over watch state can be read', async () => {
+      representationStore.listStreamEntries.mockRejectedValue(new Error('connection reset'));
+      watchContinuity.prepareServer.mockRejectedValue(new Error('connection reset'));
+
+      await syncCompleteUser({ stateRows: [{ video_id: 7, server_user_id: 'u1' }] });
+
+      expect(VideoWatchStatus.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    test('resets nothing when only the STRM records cannot be read', async () => {
+      representationStore.listStreamEntries.mockRejectedValue(new Error('connection reset'));
+
+      await syncCompleteUser({ stateRows: [{ video_id: 7, server_user_id: 'u1' }] });
+
+      expect(VideoWatchStatus.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    test('warns when a failed continuity read holds resets back', async () => {
+      streamedRecords();
+      const failure = new Error('connection reset');
+      watchContinuity.prepareServer.mockRejectedValue(failure);
+
+      await syncCompleteUser({ stateRows: [{ video_id: 7, server_user_id: 'u1' }] });
+
+      expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: failure, serverType: 'jellyfin' }), expect.stringContaining('not resetting'));
+    });
+
+    test('still writes what the server lists when a continuity read failed', async () => {
+      representationStore.listStreamEntries.mockRejectedValue(new Error('connection reset'));
+      watchContinuity.prepareServer.mockRejectedValue(new Error('connection reset'));
+
+      await syncCompleteUser({ entries: [watchedEntry], stateRows: [{ video_id: 7, server_user_id: 'u1' }] });
+
+      expect(writtenRows()).toEqual([expect.objectContaining({ video_id: 7, played: true })]);
+    });
+
+    test('reads the STRM records once per sync and carried-over state once per server', async () => {
+      streamedRecords(['id1']);
+      serverRegistry.getEnabledAdapters.mockReturnValue(['jellyfin', 'emby'].map((type) => fakeAdapter(type, jest.fn().mockResolvedValue({
+        entries: [], users: [], completeUserIds: ['u1'],
+      }))));
+      Video.findAll.mockResolvedValue([video, { id: 8, youtubeId: 'id2', filePath: '/data/Chan/Video B [id2].mp4' }]);
+      VideoWatchStatus.findAll.mockResolvedValue([]);
+
+      await watchStatusSync.syncAll();
+
+      expect([representationStore.listStreamEntries.mock.calls.length, watchContinuity.prepareServer.mock.calls.length]).toEqual([1, 2]);
+    });
+
+    test('does not reset a row whose watch state is being carried over to a new item', async () => {
+      streamedRecords();
+      watchContinuity.prepareServer.mockResolvedValue({ held: new Set(['7:u1']), restoredYoutubeIds: [], carryovers: [] });
+
+      await syncCompleteUser({ stateRows: [{ video_id: 7, server_user_id: 'u1' }] });
+
+      expect(VideoWatchStatus.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    test('resets nothing when carried-over watch state cannot be read', async () => {
+      streamedRecords();
+      watchContinuity.prepareServer.mockRejectedValue(new Error('table missing'));
+
+      await syncCompleteUser({ stateRows: [{ video_id: 7, server_user_id: 'u1' }] });
+
+      expect(VideoWatchStatus.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    test('still writes what the server lists for a held row', async () => {
+      streamedRecords();
+      watchContinuity.prepareServer.mockResolvedValue({ held: new Set(['7:u1']), restoredYoutubeIds: [], carryovers: [] });
+
+      await syncCompleteUser({ entries: [watchedEntry], stateRows: [{ video_id: 7, server_user_id: 'u1' }] });
+
+      expect(writtenRows()).toEqual([expect.objectContaining({ video_id: 7, played: true })]);
+    });
+
+    test('refreshes playlists of videos whose watch state was restored', async () => {
+      streamedRecords();
+      watchContinuity.prepareServer.mockResolvedValue({ held: new Set(), restoredYoutubeIds: ['id1'], carryovers: [] });
+
+      await syncCompleteUser();
+
+      expect(playlistOutputRefresh.refreshForVideosInBackground).toHaveBeenCalledWith(['id1'], expect.any(String));
+    });
+
     test('resets nothing for an adapter that does not list users completely', async () => {
       serverRegistry.getEnabledAdapters.mockReturnValue([fakeAdapter('plex', resolvedFetch([]))]);
       Video.findAll.mockResolvedValue([video]);
@@ -432,6 +555,58 @@ describe('watchStatusSync', () => {
       await watchStatusSync.syncAll();
 
       expect(VideoWatchStatus.findAll).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('published STRM entries', () => {
+    const strmPath = '/data/Chan [UC1]/Season 2024/Chan - S2024E001 - A [id1].strm';
+
+    beforeEach(() => {
+      representationStore.listStreamEntries.mockResolvedValue({ published: new Map([['id1', strmPath]]), youtubeIds: new Set(['id1']) });
+    });
+
+    test('loads stream-only videos together with downloaded ones', async () => {
+      serverRegistry.getEnabledAdapters.mockReturnValue([fakeAdapter('jellyfin', resolvedFetch([]))]);
+      Video.findAll.mockResolvedValue([]);
+
+      await watchStatusSync.syncAll();
+
+      expect(Video.findAll).toHaveBeenCalledWith(expect.objectContaining({
+        where: { [Op.or]: [{ filePath: { [Op.ne]: null } }, { youtubeId: { [Op.in]: ['id1'] } }] },
+      }));
+    });
+
+    test('matches watch state of a stream-only video at its STRM entry', async () => {
+      serverRegistry.getEnabledAdapters.mockReturnValue([fakeAdapter('jellyfin', resolvedFetch([{
+        path: '/media/Chan [UC1]/Season 2024/Chan - S2024E001 - A [id1].strm', serverUserId: 'u1',
+        played: false, playCount: 0, positionMs: 60000, percentWatched: 12, lastWatchedAt: null,
+      }]))]);
+      Video.findAll.mockResolvedValue([{ id: 7, youtubeId: 'id1', filePath: null, removed: true }]);
+
+      await watchStatusSync.syncAll();
+
+      expect(VideoWatchStatus.bulkCreate.mock.calls[0][0]).toEqual([expect.objectContaining({ video_id: 7, position_ms: 60000 })]);
+    });
+
+    test('keeps a downloaded file as the match target over its retired STRM entry', async () => {
+      serverRegistry.getEnabledAdapters.mockReturnValue([fakeAdapter('jellyfin', resolvedFetch([]))]);
+      const downloaded = { id: 7, youtubeId: 'id1', filePath: '/data/Chan [UC1]/Season 2024/Chan - S2024E001 - A [id1].mp4', removed: false };
+      Video.findAll.mockResolvedValue([downloaded]);
+      const match = jest.spyOn(watchStatusSync, '_matchVideos');
+
+      await watchStatusSync.syncAll();
+
+      expect(match.mock.calls[0][0]).toEqual([downloaded]);
+    });
+
+    test('syncs downloaded files when STRM entries cannot be read', async () => {
+      representationStore.listStreamEntries.mockRejectedValue(new Error('table missing'));
+      serverRegistry.getEnabledAdapters.mockReturnValue([fakeAdapter('jellyfin', resolvedFetch([]))]);
+      Video.findAll.mockResolvedValue([]);
+
+      await watchStatusSync.syncAll();
+
+      expect(Video.findAll).toHaveBeenCalledWith(expect.objectContaining({ where: { filePath: { [Op.ne]: null } } }));
     });
   });
 
