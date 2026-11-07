@@ -800,6 +800,12 @@ const initialize = async () => {
               });
           }, 5000); // Delay 5 seconds to avoid blocking startup
 
+          // Delayed caption checks (issue #5): durable queue in the
+          // database; interrupted checks return to it unchanged.
+          require('./modules/captions').enrichment.start().catch((err) => {
+            logger.error({ err }, 'Caption check worker failed to start');
+          });
+
           // Count channel tabs whose counts are missing or old (first run
           // after upgrading, long downtime), after the startup rescan.
           setTimeout(() => {

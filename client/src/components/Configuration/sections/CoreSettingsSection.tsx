@@ -30,6 +30,7 @@ import { InfoTooltip } from '../common/InfoTooltip';
 import SubtitleLanguageSelector from '../SubtitleLanguageSelector';
 import { VideoFilenameTemplate } from './components/VideoFilenameTemplate';
 import { LibraryOutputProfileSelect } from './components/LibraryOutputProfileSelect';
+import { CaptionPreferences } from './components/CaptionPreferences';
 import { SubfolderAutocomplete } from '../../shared/SubfolderAutocomplete';
 import { ManageSubfoldersDialog } from '../../shared/ManageSubfoldersDialog';
 import { AddSubfolderDialog } from '../../shared/AddSubfolderDialog';
@@ -288,6 +289,17 @@ export const CoreSettingsSection: React.FC<CoreSettingsSectionProps> = ({
                         />
                       </Box>
                     </Box>
+                  </Grid>
+                )}
+
+                {config.subtitlesEnabled && (
+                  <Grid item xs={12}>
+                    <CaptionPreferences
+                      config={config}
+                      onConfigChange={onConfigChange}
+                      onMobileTooltipClick={onMobileTooltipClick}
+                      token={token}
+                    />
                   </Grid>
                 )}
               </Grid>

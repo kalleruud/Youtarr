@@ -137,3 +137,18 @@ describe('tvPublisher', () => {
     expect(await tvPublisher.findShowFolderName(path.join(root, 'nope'), CHANNEL)).toBeNull();
   });
 });
+
+test('TV publication waits for the caption publication lease', async () => {
+  const lease = require('../../download/videoPublicationLease');
+  const publicationPlan = plan(await downloadFixture());
+  const release = await lease.acquire(ID);
+  const publication = tvPublisher.publish(publicationPlan);
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(await listTree(library)).toEqual([]);
+  } finally {
+    await release();
+    await publication;
+  }
+  expect(await fs.pathExists(publicationPlan.media.target)).toBe(true);
+});

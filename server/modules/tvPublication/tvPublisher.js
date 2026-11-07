@@ -6,6 +6,7 @@
 // until it lands nothing is exposed as a completed item, and once it lands its
 // metadata, captions and thumbnail are already there.
 const fs = require('fs-extra');
+const publicationLease = require('../download/videoPublicationLease');
 const path = require('path');
 const crypto = require('crypto');
 const logger = require('../../logger');
@@ -159,7 +160,11 @@ async function removeStaleEpisodeFiles(plan) {
  * staged media file is moved back to its source, then the error is rethrown.
  * @returns {Promise<{mediaPath: string, written: string[], removed: string[]}>}
  */
-async function publish(plan) {
+function publish(plan) {
+  return publicationLease.withLease(plan.youtubeId, () => publishLeased(plan));
+}
+
+async function publishLeased(plan) {
   await fs.ensureDir(plan.seasonDir);
   const written = [];
   const mediaInPlace = path.resolve(plan.media.source) === path.resolve(plan.media.target);
