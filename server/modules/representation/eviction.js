@@ -1,7 +1,6 @@
 // Eviction of an episode's local copy while it stays streamable (issue #14):
 // a previewed action, separate from any policy change. Runs on the
 // representation facade (index.js), which owns leases and STRM writes.
-const fs = require('fs-extra');
 const path = require('path');
 const logger = require('../../logger');
 const Video = require('../../models/video');
@@ -10,28 +9,15 @@ const configModule = require('../configModule');
 const { getCapabilities } = require('../acquisition/capabilities');
 const { removedColumns } = require('../videoRemovalState');
 const { checkLibraryRoot, isRowUnderLibraryCheck } = require('../libraryRootCheck');
+const videoActivity = require('../download/videoActivity');
 const store = require('./representationStore');
 const watchContinuity = require('./watchContinuity');
 const { RepresentationError } = require('./representationError');
-const { listEpisodeSidecars } = require('./localAsset');
-const { MODES, STATES, LEASE_OPERATIONS, STREAM_ENTRY_EXTENSION } = require('./representationValues');
+const { listEpisodeSidecars, findLocalMedia } = require('./localAsset');
+const { fileIdentity, removeIfUnchanged, recoverTombstones } = require('./localTombstone');
+const { KINDS, MODES, STATES, LEASE_OPERATIONS, STREAM_ENTRY_EXTENSION } = require('./representationValues');
 
 const EVICTION_DETAIL = 'Local copy removed; still streamable';
-
-// What identifies the previewed local file: a download that replaced it
-// meanwhile (same path, new file) must not be evicted.
-async function fileIdentity(location) {
-  try {
-    const stat = await fs.stat(location);
-    return { ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs };
-  } catch (err) {
-    return null;
-  }
-}
-
-function sameIdentity(a, b) {
-  return !!a && !!b && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
-}
 
 // A failing downloads-folder check (an unmounted drive or share) blocks
 // evicting a file it covers, as it blocks manual deletes; a check that
@@ -69,6 +55,8 @@ async function preview(facade, youtubeId) {
     refuse('stream_publisher_unavailable', 'STRM publication is not available, so the episode would disappear. Delete the video instead.');
   }
   if (video && video.youtube_removed) refuse('source_removed', 'The video is no longer on YouTube; the local copy is the only one left.');
+  // A queued or running download could publish a new file mid-eviction.
+  if (videoActivity.isActive(youtubeId)) refuse('download_active', 'This video is being downloaded. Try again when the download finishes.');
   return {
     youtubeId,
     allowed: reasons.length === 0,
@@ -79,16 +67,44 @@ async function preview(facade, youtubeId) {
   };
 }
 
+// The removal itself. Only the previewed file is ever deleted
+// (localTombstone); a file another download put at the path stays, and the
+// episode converges to it instead of being marked evicted.
+async function removePreviewed(facade, lease, youtubeId, local, identity, stream) {
+  const removal = await removeIfUnchanged(local.location, identity);
+  if (!removal.removed) {
+    await facade._yieldToLocalMedia(lease, youtubeId, stream.location)
+      .catch(err => logger.warn({ err, youtubeId }, 'Could not withdraw the STRM entry of a stopped eviction'));
+    const message = removal.reason === 'missing'
+      ? 'The local copy disappeared while it was being evicted; nothing was removed.'
+      : 'The local copy changed while it was being evicted; nothing was removed.';
+    throw new RepresentationError(409, 'local-copy-changed', message);
+  }
+  // A download may have published a new file at the path right after the
+  // previewed one was moved aside: then that file is the episode's copy.
+  if ((await findLocalMedia(path.dirname(local.location), youtubeId)).length > 0) {
+    await facade._yieldToLocalMedia(lease, youtubeId, stream.location);
+    logger.info({ youtubeId, removed: local.location }, 'Evicted the previewed copy; a new download replaced it');
+    return false;
+  }
+  return true;
+}
+
 /**
- * Evict the local copy after a preview. The local item's watch state is
- * recorded first (a failure changes nothing), then the STRM entry is
- * published, then only the media file is removed - and only while the
- * lease is still held and the file is still the one previewed; otherwise
- * the STRM entry is withdrawn and the local file stays. Refused unless the
- * preview allows it and nothing changed since (expectedRevision).
+ * Evict the local copy after a preview. Interrupted evictions are recovered
+ * first (localTombstone). The local item's watch state is recorded (a
+ * failure changes nothing), then the STRM entry is published, then only the
+ * previewed media file is removed - only while the lease is still held and
+ * the file at the path is still the one previewed (checked after it was
+ * atomically moved aside, so no unleased download can slip in between);
+ * otherwise the STRM entry is withdrawn and the local file stays. Refused
+ * unless the preview allows it and nothing changed since (expectedRevision).
  */
 async function evict(facade, youtubeId, { expectedRevision } = {}) {
   return facade.withPublicationLease(youtubeId, LEASE_OPERATIONS.EVICTION, async (lease) => {
+    const before = await facade._resolve(youtubeId);
+    const recordedLocal = before.candidates.find(c => c.kind === KINDS.LOCAL && c.location);
+    if (recordedLocal) await recoverTombstones(path.dirname(recordedLocal.location), youtubeId);
     const previewed = await preview(facade, youtubeId);
     if (!previewed.allowed) {
       throw new RepresentationError(409, 'eviction-refused', previewed.reasons[0].message, previewed.reasons);
@@ -108,15 +124,14 @@ async function evict(facade, youtubeId, { expectedRevision } = {}) {
         carryovers += await watchContinuity.ensureCarryovers({ youtubeId, fromLocation: local.location, toLocation: stream.location });
       }
       await facade._confirmLease(lease);
-      if (!sameIdentity(identity, await fileIdentity(local.location))) {
-        throw new RepresentationError(409, 'local-copy-changed', 'The local copy changed while it was being evicted; nothing was removed.');
-      }
     } catch (err) {
       await facade._yieldToLocalMedia(err.code === 'LEASE_LOST' ? null : lease, youtubeId, stream.location)
         .catch(yieldErr => logger.warn({ err: yieldErr, youtubeId }, 'Could not withdraw the STRM entry of a stopped eviction'));
       throw err;
     }
-    await fs.remove(local.location);
+    if (!(await removePreviewed(facade, lease, youtubeId, local, identity, stream))) {
+      return { youtubeId, removed: [local.location], kept: previewed.keep, streamLocation: null, carryovers, replacedByDownload: true };
+    }
     await store.record(lease, {
       kind: local.kind, variant: local.variant || '', state: STATES.EVICTED, location: local.location,
       sizeBytes: local.sizeBytes ?? null, detail: EVICTION_DETAIL,

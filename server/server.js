@@ -794,6 +794,10 @@ const initialize = async () => {
                 if (!result || result.status !== 'error') {
                   logger.info('Video metadata backfill completed successfully');
                 }
+                // Episodes left with both a STRM entry and a local copy (#14);
+                // the pass logs its own outcome.
+                return require('./modules/representation').reconcileDuplicateEntries()
+                  .catch(err => logger.warn({ err }, 'Could not reconcile episodes with both a STRM entry and a local copy'));
               })
               .catch(err => {
                 logger.error({ err }, 'Video metadata backfill failed');

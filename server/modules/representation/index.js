@@ -9,11 +9,14 @@
 // lands. The watch state the media server kept on the item that goes away is
 // recorded durably (watchContinuity) BEFORE anything visible changes, and is
 // restored onto the new item; when it cannot be recorded, the old entry stays
-// until a later event records it. Every change runs under the episode's
-// publication lease, re-checked right before each filesystem change, so a
-// download, a STRM refresh and an eviction of the same video never
-// interleave; each one reconciles leftovers of the others, and a local file
-// always wins over a STRM entry: whatever ran last leaves one visible entry.
+// until a later event, or the periodic reconcile pass, records it. Changes
+// run under the episode's publication lease, re-checked right before each
+// filesystem change. A download may still publish without it (no STRM entry
+// in its folder, a busy lease, a database error), so nothing relies on the
+// lease alone: an eviction deletes only the very file it previewed
+// (localTombstone), every operation reconciles leftovers of the others, a
+// local file always wins over a STRM entry, and the reconcile pass converges
+// whatever is left.
 const fs = require('fs-extra');
 const path = require('path');
 const logger = require('../../logger');
@@ -24,13 +27,13 @@ const store = require('./representationStore');
 const watchContinuity = require('./watchContinuity');
 const { selectRepresentation } = require('./selectRepresentation');
 const eviction = require('./eviction');
+const reconcilePass = require('./reconcilePass');
+const downloadPublication = require('./downloadPublication');
 const { RepresentationError } = require('./representationError');
 const { inspectLocalMedia, isStreamEntryFor, findStreamEntries, findLocalMedia } = require('./localAsset');
 const { KINDS, STATES, MODES, LEASE_OPERATIONS } = require('./representationValues');
 
-// A download waits out a STRM publication (whose lease expires after two
-// minutes) rather than publishing beside it.
-const PROMOTION_LEASE_WAIT_MS = 150 * 1000;
+const { PROMOTION_LEASE_WAIT_MS } = downloadPublication;
 
 function requireIdentity(youtubeId) {
   if (!isYoutubeIdentity(youtubeId)) throw new RepresentationError(400, 'invalid-id', 'A valid YouTube video ID is required');
@@ -91,7 +94,9 @@ class EpisodeRepresentations {
       }
     }
     const hasUsableLocal = candidates.some(c => c.kind === KINDS.LOCAL && c.usable);
-    const known = new Set(representations.map(rep => rep.location));
+    // An evicted record does not hide a file the library row says is back
+    // (a download that landed during or after the eviction).
+    const known = new Set(representations.filter(rep => rep.state !== STATES.EVICTED).map(rep => rep.location));
     if (!hasUsableLocal && video && video.filePath && !video.removed && !known.has(video.filePath)) {
       const check = await inspectLocalMedia(video.filePath, youtubeId);
       candidates.push({
@@ -226,22 +231,41 @@ class EpisodeRepresentations {
         logger.warn({ err, location }, 'Could not remove a STRM entry replaced by a local copy');
       }
     }
+    // A record stays published while its entry is still on disk, so the
+    // periodic reconcile pass retries the removal.
+    const failed = new Set(present.filter(location => !removed.includes(location)));
     let retired = 0;
-    for (const stream of published) {
+    for (const stream of published.filter(s => !failed.has(s.location))) {
       await store.record(lease, {
         kind: KINDS.STRM, variant: stream.variant, state: STATES.RETIRED, location: stream.location,
         detail: 'Replaced by the local copy',
       });
       retired += 1;
     }
+    // A copy known only from the library row becomes a recorded one.
+    if (local.legacy && (removed.length || retired)) {
+      await store.record(lease, {
+        kind: KINDS.LOCAL, state: STATES.VERIFIED, location: local.location, sizeBytes: local.sizeBytes ?? null, verified: true,
+      });
+    }
     if (removed.length || retired) logger.info({ youtubeId, removed: removed.length, retired }, 'Reconciled episode to its local copy');
-    return { removed, retired };
+    return { removed, retired, failed: failed.size };
   }
 
   /** Converge the episode's visible entries to its selected copy. */
   async reconcile(youtubeId, { lease = null } = {}) {
     requireIdentity(youtubeId);
     return this._withLease(youtubeId, LEASE_OPERATIONS.RECONCILE, lease, l => this._reconcileUnderLease(l, youtubeId));
+  }
+
+  /**
+   * Periodic convergence (after the filesystem rescan): every episode with a
+   * published STRM entry and a local copy is reconciled, so a STRM entry
+   * kept after a failed watch-state snapshot is removed once one succeeds,
+   * without waiting for another event. See reconcilePass.
+   */
+  async reconcileDuplicateEntries(options) {
+    return reconcilePass.run(this, options);
   }
 
   /**
@@ -282,73 +306,14 @@ class EpisodeRepresentations {
 
   /**
    * Publish a finished download as the episode's visible file and promote it
-   * (TV layout). publish() only ever replaces a STRM entry in the planned
-   * file's folder, so when that folder holds none (every video that was
-   * never streamed), it runs straight away, as before representations
-   * existed: no lease, no database access first. Otherwise the watch state
-   * of the STRM entry is recorded before publish() runs, under the lease;
-   * publish({ keepStreamEntries }) must keep STRM entries in place when
-   * asked (the snapshot failed or could not be checked), and the next event
-   * removes them. Never fails the download because of representations: a
-   * busy lease or a database error is logged and the file is published
-   * anyway (the lease holder, or the next promotion or publication,
-   * converges the episode to the local file).
+   * (TV layout); never fails the download because of representations. See
+   * downloadPublication.publish.
    * @param {string} youtubeId
    * @param {{plannedLocation: string, publish: function({keepStreamEntries: boolean}): Promise<{mediaPath: string}>}} options
    * @returns {Promise<{mediaPath: string}>} what publish returned
    */
-  async publishDownloadedEpisode(youtubeId, { plannedLocation, publish }) {
-    if ((await findStreamEntries(path.dirname(plannedLocation), youtubeId)).length === 0) {
-      const result = await publish({ keepStreamEntries: false });
-      await this._promoteAfterPublish(youtubeId, result.mediaPath, null);
-      return result;
-    }
-    let streamed = null;
-    try {
-      streamed = await this.hasNonLocalRepresentation(youtubeId);
-    } catch (err) {
-      logger.warn({ err, youtubeId }, 'Could not read the episode representations; publishing the download without them');
-    }
-    let lease = null;
-    try {
-      lease = await store.acquireLease(youtubeId, LEASE_OPERATIONS.DOWNLOAD_PROMOTION, { waitMs: streamed ? PROMOTION_LEASE_WAIT_MS : 0 });
-    } catch (err) {
-      logger.warn({ err, youtubeId }, 'Could not take the episode publication lease; publishing the download without it');
-    }
-    try {
-      let keepStreamEntries = streamed !== false;
-      if (streamed) {
-        try {
-          const { candidates } = await this._resolve(youtubeId);
-          await this._snapshotForLocal(youtubeId, candidates, plannedLocation);
-          keepStreamEntries = false;
-        } catch (err) {
-          logger.error({ err, youtubeId }, 'Could not record the watch state of the STRM entry; keeping it until a later event');
-        }
-      }
-      if (lease) {
-        try {
-          await store.renewLease(lease);
-        } catch (err) {
-          logger.warn({ err, youtubeId }, 'Lost the episode publication lease; publishing the download without it');
-          lease = null;
-        }
-      }
-      const result = await publish({ keepStreamEntries });
-      await this._promoteAfterPublish(youtubeId, result.mediaPath, lease);
-      return result;
-    } finally {
-      if (lease) await store.releaseLease(lease).catch(err => logger.warn({ err, youtubeId }, 'Could not release the episode publication lease'));
-    }
-  }
-
-  // The file is published: record it, never failing the download.
-  async _promoteAfterPublish(youtubeId, mediaPath, lease) {
-    try {
-      await this.promoteDownloadedAsset(youtubeId, { location: mediaPath }, lease ? { lease } : { waitMs: 0 });
-    } catch (err) {
-      logger.warn({ err, youtubeId }, 'Could not record the download as the episode representation; the next event reconciles it');
-    }
+  async publishDownloadedEpisode(youtubeId, options) {
+    return downloadPublication.publish(this, youtubeId, options);
   }
 
   // Leave one entry when a local media file sits beside a STRM entry this

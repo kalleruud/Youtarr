@@ -86,4 +86,16 @@ describe('episode representation routes', () => {
     const res = await request(buildApp({ getStatus: jest.fn().mockRejectedValue(new Error('db down')) })).get(`/api/videos/${ID}/representation`);
     expect([res.status, res.body]).toEqual([500, { error: 'Failed to process the episode representation' }]);
   });
+
+  test('rate-limits representation reads', async () => {
+    const app = buildApp({ getStatus: jest.fn().mockResolvedValue({}) });
+    for (let i = 0; i < 120; i += 1) await request(app).get(`/api/videos/${ID}/representation`);
+    expect((await request(app).get(`/api/videos/${ID}/representation`)).status).toBe(429);
+  });
+
+  test('rate-limits evictions more tightly than reads', async () => {
+    const app = buildApp({ evictLocalCopy: jest.fn().mockResolvedValue({}) });
+    for (let i = 0; i < 30; i += 1) await request(app).post(`/api/videos/${ID}/representation/evict`).send({ expectedRevision: 1 });
+    expect((await request(app).post(`/api/videos/${ID}/representation/evict`).send({ expectedRevision: 1 })).status).toBe(429);
+  });
 });

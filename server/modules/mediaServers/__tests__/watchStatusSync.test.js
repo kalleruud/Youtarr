@@ -450,9 +450,9 @@ describe('watchStatusSync', () => {
         .toEqual([0, [expect.objectContaining({ video_id: 7, played: false })]]);
     });
 
-    test('holds back only streamed videos when carried-over watch state cannot be read', async () => {
+    test('resets no stored watch state on the server when carried-over watch state cannot be read', async () => {
       streamedRecords(['id1']);
-      watchContinuity.prepareServer.mockRejectedValue(new Error('table missing'));
+      watchContinuity.prepareServer.mockRejectedValue(new Error('connection reset'));
       const other = { id: 8, youtubeId: 'id2', filePath: '/data/Chan/Video B [id2].mp4' };
 
       await syncCompleteUser({
@@ -460,16 +460,43 @@ describe('watchStatusSync', () => {
         stateRows: [{ video_id: 7, server_user_id: 'u1' }, { video_id: 8, server_user_id: 'u1' }],
       });
 
-      expect(writtenRows().map((row) => row.video_id)).toEqual([8]);
+      expect(VideoWatchStatus.bulkCreate).not.toHaveBeenCalled();
     });
 
-    test('keeps the existing resets when no representation table can be read', async () => {
-      representationStore.listStreamEntries.mockRejectedValue(new Error('table missing'));
-      watchContinuity.prepareServer.mockRejectedValue(new Error('table missing'));
+    test('resets nothing when neither the STRM records nor the carried-over watch state can be read', async () => {
+      representationStore.listStreamEntries.mockRejectedValue(new Error('connection reset'));
+      watchContinuity.prepareServer.mockRejectedValue(new Error('connection reset'));
 
       await syncCompleteUser({ stateRows: [{ video_id: 7, server_user_id: 'u1' }] });
 
-      expect(writtenRows()).toEqual([expect.objectContaining({ video_id: 7, played: false })]);
+      expect(VideoWatchStatus.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    test('resets nothing when only the STRM records cannot be read', async () => {
+      representationStore.listStreamEntries.mockRejectedValue(new Error('connection reset'));
+
+      await syncCompleteUser({ stateRows: [{ video_id: 7, server_user_id: 'u1' }] });
+
+      expect(VideoWatchStatus.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    test('warns when a failed continuity read holds resets back', async () => {
+      streamedRecords();
+      const failure = new Error('connection reset');
+      watchContinuity.prepareServer.mockRejectedValue(failure);
+
+      await syncCompleteUser({ stateRows: [{ video_id: 7, server_user_id: 'u1' }] });
+
+      expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: failure, serverType: 'jellyfin' }), expect.stringContaining('not resetting'));
+    });
+
+    test('still writes what the server lists when a continuity read failed', async () => {
+      representationStore.listStreamEntries.mockRejectedValue(new Error('connection reset'));
+      watchContinuity.prepareServer.mockRejectedValue(new Error('connection reset'));
+
+      await syncCompleteUser({ entries: [watchedEntry], stateRows: [{ video_id: 7, server_user_id: 'u1' }] });
+
+      expect(writtenRows()).toEqual([expect.objectContaining({ video_id: 7, played: true })]);
     });
 
     test('reads the STRM records once per sync and carried-over state once per server', async () => {

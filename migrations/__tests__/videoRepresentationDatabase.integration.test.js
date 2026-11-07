@@ -78,3 +78,26 @@ test('one carryover per video, server and user', async () => {
   await WatchStateCarryover.bulkCreate([{ ...row, status: 'restored' }], { updateOnDuplicate: ['status', 'updated_at'] });
   expect((await WatchStateCarryover.findAll({ raw: true })).map(r => r.status)).toEqual(['restored']);
 });
+
+test('lease expiry follows the database clock', async () => {
+  const lease = await store.acquireLease('vidCCCCCCCC', 'eviction');
+  const [[{ remaining }]] = await db.query(
+    "SELECT TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(3), lease_expires_at) AS remaining FROM video_representation_heads WHERE youtube_id = 'vidCCCCCCCC'");
+  expect(Number(remaining) > 290e6 && Number(remaining) <= 300e6).toBe(true);
+  // A lease the database clock says is still valid is busy, whatever this
+  // process's clock says; one it says has expired is taken over.
+  await db.query("UPDATE video_representation_heads SET lease_expires_at = UTC_TIMESTAMP(3) + INTERVAL 60 SECOND WHERE youtube_id = 'vidCCCCCCCC'");
+  await expect(store.acquireLease('vidCCCCCCCC', 'reconcile')).rejects.toMatchObject({ code: 'LEASE_BUSY' });
+  await db.query("UPDATE video_representation_heads SET lease_expires_at = UTC_TIMESTAMP(3) - INTERVAL 1 SECOND WHERE youtube_id = 'vidCCCCCCCC'");
+  await expect(store.acquireLease('vidCCCCCCCC', 'reconcile')).resolves.toMatchObject({ operation: 'reconcile' });
+  await expect(store.renewLease(lease)).rejects.toMatchObject({ code: 'LEASE_LOST' });
+});
+
+test('duplicate candidates: published STRM entries with a recorded local copy', async () => {
+  const lease = await store.acquireLease('vidDDDDDDDD', 'download-promotion');
+  await store.record(lease, { kind: 'strm', state: 'published', location: '/m/A [vidDDDDDDDD].strm' });
+  await store.record(lease, { kind: 'local', state: 'verified', location: '/m/A [vidDDDDDDDD].mp4' });
+  await store.releaseLease(lease);
+  const candidates = await store.listDuplicateCandidates({ findLibraryFiles: async () => new Map() });
+  expect(candidates).toEqual([{ youtubeId: 'vidDDDDDDDD', localLocations: ['/m/A [vidDDDDDDDD].mp4'] }]);
+});

@@ -64,6 +64,7 @@ function initialize(deps = {}) {
   const ytdlpModule = require('./ytdlpModule');
   const configModule = require('./configModule');
   const tabVideoCounts = require('./channel/tabVideoCounts');
+  const representations = require('./representation');
   const { refreshYtDlpVersionCache } = deps;
 
   logger.info('Initializing scheduled cron jobs');
@@ -175,7 +176,16 @@ function initialize(deps = {}) {
       } else if (!result || result.status !== 'error') {
         logger.info('Video metadata backfill completed successfully');
       }
-      return result ? rescanRunSummary.toRunRecord(result) : undefined;
+      // Episodes left with both a STRM entry and a local copy converge here
+      // (issue #14); it logs its own outcome and never fails the rescan.
+      const episodeEntries = await representations.reconcileDuplicateEntries()
+        .catch((err) => {
+          logger.warn({ err }, 'Could not reconcile episodes with both a STRM entry and a local copy');
+          return { error: err.message };
+        });
+      const record = result ? rescanRunSummary.toRunRecord(result) : undefined;
+      if (record && record.details) record.details.episodeEntries = episodeEntries;
+      return record;
     } catch (error) {
       // Only an unexpected rejection reaches this catch; the module reports its own failures.
       logger.error({ err: error }, 'Video metadata backfill failed');

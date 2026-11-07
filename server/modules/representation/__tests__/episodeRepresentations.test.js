@@ -5,7 +5,8 @@ jest.mock('../../../logger');
 jest.mock('../representationStore', () => require('./fakeRepresentationStore').createFakeStore());
 jest.mock('../watchContinuity', () => ({ ensureCarryovers: jest.fn().mockResolvedValue(0), listForYoutubeId: jest.fn().mockResolvedValue([]) }));
 jest.mock('../../configModule', () => ({ directoryPath: '' }));
-jest.mock('../../../models/video', () => ({ findOne: jest.fn(), update: jest.fn() }));
+jest.mock('../../../models/video', () => ({ findOne: jest.fn(), findAll: jest.fn(), update: jest.fn() }));
+jest.mock('../../download/videoActivity', () => ({ isActive: jest.fn(() => false) }));
 jest.mock('../../../models/channel', () => ({ findOne: jest.fn() }));
 jest.mock('../../acquisition/capabilities', () => {
   const capabilities = { stream: { available: false } };
@@ -22,6 +23,7 @@ const Channel = require('../../../models/channel');
 const configModule = require('../../configModule');
 const logger = require('../../../logger');
 const { getCapabilities } = require('../../acquisition/capabilities');
+const videoActivity = require('../../download/videoActivity');
 const representations = require('..');
 
 const ID = 'vid12345678';
@@ -64,6 +66,8 @@ beforeEach(async () => {
   await fs.outputFile(path.join(seasonDir, `${stem}.en.srt`), 'captions');
   video = { id: 7, youtubeId: ID, channel_id: 'UCchannel01', filePath: null, removed: false, youtube_removed: false, protected: false };
   Video.findOne.mockImplementation(async () => video);
+  Video.findAll.mockImplementation(async () => (video.filePath && !video.removed ? [{ youtubeId: ID, filePath: video.filePath }] : []));
+  videoActivity.isActive.mockReturnValue(false);
   Channel.findOne.mockResolvedValue({ auto_removal_protected: false });
   watchContinuity.ensureCarryovers.mockResolvedValue(0);
   configModule.directoryPath = root;
@@ -353,6 +357,57 @@ describe('local eviction', () => {
     expect([await visibleEntries(), await fs.readFile(mediaPath, 'utf8')]).toEqual([[`${stem}.mp4`], 'a newer, longer download']);
   });
 
+  // A download that publishes without the lease, renaming its new file onto
+  // the media path at the moment eviction moves the previewed file aside.
+  const interleaveRename = ({ before, after }) => {
+    const realRename = fs.rename;
+    return jest.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      const evicting = from === mediaPath && to.includes('youtarr-evicting');
+      if (evicting && before) await before();
+      await realRename(from, to);
+      if (evicting && after) await after();
+    });
+  };
+  const unleasedDownload = (text) => async () => {
+    const staged = path.join(seasonDir, '.youtarr-partial-new.mp4');
+    await fs.outputFile(staged, text);
+    await fs.move(staged, mediaPath, { overwrite: true });
+  };
+
+  test('keeps a download that replaced the media in the instant before the removal', async () => {
+    const spy = interleaveRename({ before: unleasedDownload('a newer download') });
+    await expect(representations.evictLocalCopy(ID)).rejects.toMatchObject({ code: 'local-copy-changed' });
+    spy.mockRestore();
+    expect([await visibleEntries(), await fs.readFile(mediaPath, 'utf8')]).toEqual([[`${stem}.mp4`], 'a newer download']);
+  });
+
+  test('keeps a download that landed right after the previewed media was moved aside', async () => {
+    const spy = interleaveRename({ after: unleasedDownload('a newer download') });
+    const result = await representations.evictLocalCopy(ID);
+    spy.mockRestore();
+    expect([result.replacedByDownload, await visibleEntries(), await fs.readFile(mediaPath, 'utf8')])
+      .toEqual([true, [`${stem}.mp4`], 'a newer download']);
+  });
+
+  test('does not mark the video deleted when a download replaced the evicted media', async () => {
+    const spy = interleaveRename({ after: unleasedDownload('a newer download') });
+    await representations.evictLocalCopy(ID);
+    spy.mockRestore();
+    expect([Video.update.mock.calls.length, store.rows.find(r => r.kind === 'local').state]).toEqual([0, 'verified']);
+  });
+
+  test('refuses while the video is queued or downloading', async () => {
+    videoActivity.isActive.mockReturnValue(true);
+    await expect(representations.evictLocalCopy(ID)).rejects.toMatchObject({ code: 'eviction-refused', reasons: [expect.objectContaining({ code: 'download_active' })] });
+  });
+
+  test('puts back a file an interrupted eviction left aside before evicting again', async () => {
+    const tombstone = path.join(seasonDir, `.${stem}.mp4 [youtarr-evicting-0123456789abcdef]`);
+    await fs.rename(mediaPath, tombstone);
+    await representations.evictLocalCopy(ID);
+    expect([await fs.pathExists(tombstone), await visibleEntries()]).toEqual([false, [`${stem}.strm`]]);
+  });
+
   test('stops before removing the local file when the lease was taken over', async () => {
     representations.registerStreamPublisher({
       write: async () => {
@@ -591,5 +646,121 @@ describe('getStatus', () => {
     await representations.promoteDownloadedAsset(ID, { location: mediaPath });
     const status = await representations.getStatus(ID);
     expect([status.playback.mode, status.representations.length, status.eviction.allowed]).toEqual(['local', 1, false]);
+  });
+});
+
+describe('periodic reconcile pass', () => {
+  const failedSnapshot = () => watchContinuity.ensureCarryovers.mockRejectedValue(new Error('snapshot unavailable'));
+  const publisher = () => async ({ keepStreamEntries }) => {
+    await landDownload();
+    if (!keepStreamEntries) await fs.remove(strmPath);
+    return { mediaPath };
+  };
+
+  test('is a no-op without published STRM entries (streaming off)', async () => {
+    await landDownload();
+    video.filePath = mediaPath;
+    const acquire = jest.spyOn(store, 'acquireLease');
+    const result = await representations.reconcileDuplicateEntries();
+    expect([result.candidates, acquire.mock.calls.length, Video.findAll.mock.calls.length, await visibleEntries()])
+      .toEqual([0, 0, 0, [`${stem}.mp4`]]);
+    acquire.mockRestore();
+  });
+
+  describe('with a duplicate left by a failed snapshot and a failed promotion', () => {
+    beforeEach(async () => {
+      getCapabilities().stream.available = true;
+      await publishStream();
+      failedSnapshot();
+      await representations.publishDownloadedEpisode(ID, { plannedLocation: mediaPath, publish: publisher() });
+      video.filePath = mediaPath;
+      watchContinuity.ensureCarryovers.mockResolvedValue(1);
+    });
+
+    test('leaves the duplicate until the pass runs', async () => {
+      expect(await visibleEntries()).toEqual([`${stem}.mp4`, `${stem}.strm`]);
+    });
+
+    test('resolves it to the local file without a promotion call', async () => {
+      const promote = jest.spyOn(representations, 'promoteDownloadedAsset');
+      const result = await representations.reconcileDuplicateEntries();
+      expect([result.reconciled, promote.mock.calls.length, await visibleEntries()]).toEqual([1, 0, [`${stem}.mp4`]]);
+      promote.mockRestore();
+    });
+
+    test('records the STRM item\'s watch state before removing its entry', async () => {
+      watchContinuity.ensureCarryovers.mockImplementation(async () => {
+        expect(await visibleEntries()).toEqual([`${stem}.mp4`, `${stem}.strm`]);
+        return 1;
+      });
+      await representations.reconcileDuplicateEntries();
+      expect(watchContinuity.ensureCarryovers).toHaveBeenCalledWith({ youtubeId: ID, fromLocation: strmPath, toLocation: mediaPath });
+    });
+
+    test('keeps both entries while the snapshot still fails, and reports it', async () => {
+      failedSnapshot();
+      const result = await representations.reconcileDuplicateEntries();
+      expect([result.snapshotFailed, await visibleEntries()]).toEqual([1, [`${stem}.mp4`, `${stem}.strm`]]);
+    });
+
+    test('a later pass completes once the snapshot succeeds again', async () => {
+      failedSnapshot();
+      await representations.reconcileDuplicateEntries();
+      watchContinuity.ensureCarryovers.mockResolvedValue(1);
+      await representations.reconcileDuplicateEntries();
+      expect(await visibleEntries()).toEqual([`${stem}.mp4`]);
+    });
+
+    test('skips an episode whose lease is busy', async () => {
+      const lease = await store.acquireLease(ID, 'selection');
+      const result = await representations.reconcileDuplicateEntries();
+      await store.releaseLease(lease);
+      expect([result.busy, await visibleEntries()]).toEqual([1, [`${stem}.mp4`, `${stem}.strm`]]);
+    });
+
+    test('a second pass finds nothing left to do', async () => {
+      await representations.reconcileDuplicateEntries();
+      const result = await representations.reconcileDuplicateEntries();
+      expect([result.candidates, result.reconciled]).toEqual([0, 0]);
+    });
+  });
+
+  test('puts back media an interrupted eviction left aside, then removes the STRM entry', async () => {
+    getCapabilities().stream.available = true;
+    representations.registerStreamPublisher({ write: writeStreamEntry });
+    await landDownload();
+    await representations.promoteDownloadedAsset(ID, { location: mediaPath });
+    // The crash: the STRM entry is published and the media moved aside.
+    const lease = await store.acquireLease(ID, 'eviction');
+    await store.record(lease, { kind: 'strm', state: 'published', location: strmPath });
+    await store.releaseLease(lease);
+    await fs.outputFile(strmPath, 'http://youtarr/play/vid12345678');
+    await fs.rename(mediaPath, path.join(seasonDir, `.${stem}.mp4 [youtarr-evicting-0123456789abcdef]`));
+    const result = await representations.reconcileDuplicateEntries();
+    expect([result.restoredFiles, (await fs.readdir(seasonDir)).sort()]).toEqual([1, [`${stem}.en.srt`, `${stem}.mp4`, `${stem}.nfo`]]);
+  });
+
+  test('never removes local media', async () => {
+    getCapabilities().stream.available = true;
+    await publishStream();
+    await landDownload();
+    video.filePath = mediaPath;
+    await representations.reconcileDuplicateEntries();
+    expect(await fs.readFile(mediaPath, 'utf8')).toBe('media-bytes');
+  });
+
+  test('keeps a STRM record published while its entry could not be removed', async () => {
+    getCapabilities().stream.available = true;
+    await publishStream();
+    await landDownload();
+    video.filePath = mediaPath;
+    const realRemove = fs.remove;
+    const spy = jest.spyOn(fs, 'remove').mockImplementation(async (location) => {
+      if (location === strmPath) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      return realRemove(location);
+    });
+    const result = await representations.reconcileDuplicateEntries();
+    spy.mockRestore();
+    expect([result.failed, store.rows.find(r => r.kind === 'strm').state]).toEqual([1, 'published']);
   });
 });

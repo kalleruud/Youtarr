@@ -43,6 +43,18 @@ function createFakeStore() {
         youtubeIds: new Set(streams.map(r => r.youtubeId)),
       };
     },
+    async listDuplicateCandidates({ findLibraryFiles }) {
+      const ids = [...new Set(rows.filter(r => r.kind === 'strm' && r.state === 'published').map(r => r.youtubeId))];
+      if (ids.length === 0) return [];
+      const library = await findLibraryFiles(ids);
+      return ids.map(id => ({
+        youtubeId: id,
+        localLocations: [
+          ...rows.filter(r => r.youtubeId === id && r.kind === 'local' && r.state === 'verified').map(r => r.location),
+          ...(library.has(id) ? [library.get(id)] : []),
+        ],
+      })).filter(c => c.localLocations.length > 0);
+    },
     // Test helper: the current holder's lease runs out (it paused too long),
     // so the next acquireLease takes it over.
     expireLease(id) { head(id).expired = true; },

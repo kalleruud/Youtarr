@@ -5,7 +5,7 @@ jest.mock('../../../db', () => {
 jest.mock('../../../models/videoRepresentation', () => ({ findAll: jest.fn(), findOne: jest.fn(), create: jest.fn() }));
 jest.mock('../../../models/videoRepresentationHead', () => ({ findByPk: jest.fn(), bulkCreate: jest.fn(), update: jest.fn() }));
 
-const { UniqueConstraintError } = require('sequelize');
+const { UniqueConstraintError, Op } = require('sequelize');
 const VideoRepresentation = require('../../../models/videoRepresentation');
 const Head = require('../../../models/videoRepresentationHead');
 const store = require('../representationStore');
@@ -35,6 +35,49 @@ describe('renewLease', () => {
     Head.update.mockResolvedValue([0]);
     Head.findByPk.mockResolvedValue({ lease_owner: 'other' });
     await expect(store.renewLease(lease)).rejects.toMatchObject({ code: 'LEASE_LOST' });
+  });
+});
+
+describe('lease expiry on the database clock', () => {
+  const sql = (value) => value && value.val;
+
+  test('a claim sets the expiry from the database clock', async () => {
+    Head.update.mockResolvedValue([1]);
+    await store.acquireLease('vid12345678', 'eviction');
+    expect(sql(Head.update.mock.calls[0][0].lease_expires_at)).toBe('UTC_TIMESTAMP(3) + INTERVAL 300000000 MICROSECOND');
+  });
+
+  test('a claim takes over only a lease expired by the database clock', async () => {
+    Head.update.mockResolvedValue([1]);
+    await store.acquireLease('vid12345678', 'eviction');
+    const expired = Head.update.mock.calls[0][1].where[Op.or][2];
+    expect(sql(expired.lease_expires_at[Op.lt])).toBe('UTC_TIMESTAMP(3)');
+  });
+
+  test('a renewal extends the lease from the database clock', async () => {
+    Head.update.mockResolvedValue([1]);
+    await store.renewLease(lease);
+    expect(sql(Head.update.mock.calls[0][0].lease_expires_at)).toBe('UTC_TIMESTAMP(3) + INTERVAL 1800000000 MICROSECOND');
+  });
+});
+
+describe('listDuplicateCandidates', () => {
+  const findLibraryFiles = jest.fn();
+
+  test('runs one query and nothing else when no STRM entry is published', async () => {
+    VideoRepresentation.findAll.mockResolvedValueOnce([]);
+    expect([await store.listDuplicateCandidates({ findLibraryFiles }), VideoRepresentation.findAll.mock.calls.length, findLibraryFiles.mock.calls.length])
+      .toEqual([[], 1, 0]);
+  });
+
+  test('lists published episodes with a recorded or library local copy', async () => {
+    VideoRepresentation.findAll
+      .mockResolvedValueOnce([{ youtube_id: 'a' }, { youtube_id: 'b' }, { youtube_id: 'c' }])
+      .mockResolvedValueOnce([{ youtube_id: 'a', location: '/x/a.mp4' }]);
+    findLibraryFiles.mockResolvedValue(new Map([['b', '/x/b.mp4']]));
+    expect(await store.listDuplicateCandidates({ findLibraryFiles })).toEqual([
+      { youtubeId: 'a', localLocations: ['/x/a.mp4'] }, { youtubeId: 'b', localLocations: ['/x/b.mp4'] },
+    ]);
   });
 });
 

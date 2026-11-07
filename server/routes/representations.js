@@ -1,6 +1,20 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 
 const YOUTUBE_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+// Every route takes a YouTube id and reads the filesystem and database; the
+// limits leave room for a user clicking through a library.
+const RATE_WINDOW_MS = 60 * 1000;
+const READ_LIMIT = 120;
+const CHANGE_LIMIT = 30;
+const limiter = (max) => rateLimit({
+  windowMs: RATE_WINDOW_MS,
+  max,
+  message: { error: 'Too many episode representation requests, please try again shortly' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { trustProxy: false },
+});
 
 /**
  * Episode representation routes (issue #14): which copy of a video plays
@@ -13,6 +27,8 @@ const YOUTUBE_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
  */
 function createRepresentationRoutes({ verifyToken, representations }) {
   const router = express.Router();
+  const readLimiter = limiter(READ_LIMIT);
+  const changeLimiter = limiter(CHANGE_LIMIT);
 
   const handle = (operation, work) => async (req, res) => {
     try {
@@ -65,8 +81,10 @@ function createRepresentationRoutes({ verifyToken, representations }) {
    *         description: Representation status
    *       400:
    *         description: Invalid YouTube ID
+   *       429:
+   *         description: Too many requests
    */
-  router.get('/api/videos/:youtubeId/representation', verifyToken, requireYoutubeId,
+  router.get('/api/videos/:youtubeId/representation', verifyToken, readLimiter, requireYoutubeId,
     handle('getStatus', req => representations.getStatus(req.params.youtubeId)));
 
   /**
@@ -105,8 +123,10 @@ function createRepresentationRoutes({ verifyToken, representations }) {
    *         description: The representation does not belong to this video
    *       409:
    *         description: Stale expectedRevision (revision-conflict) or another change in progress (busy)
+   *       429:
+   *         description: Too many requests
    */
-  router.put('/api/videos/:youtubeId/representation/selection', verifyToken, requireYoutubeId,
+  router.put('/api/videos/:youtubeId/representation/selection', verifyToken, changeLimiter, requireYoutubeId,
     handle('selectVersion', req => {
       if (!req.body || !('representationId' in req.body)) {
         throw new representations.RepresentationError(400, 'invalid-body', 'representationId is required (null for automatic).');
@@ -120,7 +140,7 @@ function createRepresentationRoutes({ verifyToken, representations }) {
    * /api/videos/{youtubeId}/representation/evict:
    *   post:
    *     summary: Remove an episode's local copy and keep it streamable
-   *     description: Publishes the STRM entry, then removes only the media file; metadata, captions and artwork stay. Refused for protected videos and channels, when streaming or STRM publication is unavailable, or when YouTube no longer has the video. Send the revision from the GET preview.
+   *     description: Publishes the STRM entry, then removes only the media file that was previewed; metadata, captions and artwork stay. The file is moved aside atomically and deleted only if it is still the previewed file, so a download that replaced it meanwhile is kept (local-copy-changed, or replacedByDownload when the new file landed right after). Refused for protected videos and channels, while the video is queued or downloading, when streaming or STRM publication is unavailable, or when YouTube no longer has the video. Send the revision from the GET preview.
    *     tags: [Episode Representations]
    *     parameters:
    *       - in: path
@@ -145,9 +165,11 @@ function createRepresentationRoutes({ verifyToken, representations }) {
    *       400:
    *         description: Invalid body or YouTube ID
    *       409:
-   *         description: Refused (eviction-refused, with reasons), stale preview (revision-conflict) or another change in progress (busy)
+   *         description: Refused (eviction-refused, with reasons such as download_active), the local copy changed meanwhile (local-copy-changed), stale preview (revision-conflict) or another change in progress (busy)
+   *       429:
+   *         description: Too many requests
    */
-  router.post('/api/videos/:youtubeId/representation/evict', verifyToken, requireYoutubeId,
+  router.post('/api/videos/:youtubeId/representation/evict', verifyToken, changeLimiter, requireYoutubeId,
     handle('evictLocalCopy', req => {
       const expectedRevision = parseExpectedRevision(req.body);
       if (expectedRevision === undefined) {

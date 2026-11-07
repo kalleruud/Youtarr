@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { Op, UniqueConstraintError } = require('sequelize');
+const { Op, UniqueConstraintError, literal } = require('sequelize');
 const { sequelize } = require('../../db');
 const VideoRepresentation = require('../../models/videoRepresentation');
 const VideoRepresentationHead = require('../../models/videoRepresentationHead');
@@ -27,6 +27,17 @@ class RepresentationRevisionError extends Error {
     this.code = 'REVISION_CONFLICT';
     this.currentRevision = currentRevision;
   }
+}
+
+// Lease expiry is computed and compared by the database clock, so the server
+// and the yt-dlp post-processor (separate processes, possibly with drifting
+// clocks) agree on when a lease ran out. UTC_TIMESTAMP does not depend on the
+// session time zone (Sequelize sets it to +00:00 anyway).
+const DB_NOW = 'UTC_TIMESTAMP(3)';
+function dbExpiry(ttlMs) {
+  const micros = Math.max(1, Math.round(Number(ttlMs))) * 1000;
+  if (!Number.isSafeInteger(micros)) throw new Error('Invalid lease TTL');
+  return literal(`${DB_NOW} + INTERVAL ${micros} MICROSECOND`);
 }
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -60,6 +71,8 @@ function sameValues(row, values) {
  * can be checked against what changed since (expectedRevision).
  */
 class RepresentationStore {
+  // `lease` is informational (status API, LEASE_BUSY holder); lease decisions
+  // are made by the conditional updates below, on the database clock.
   async getHead(youtubeId) {
     const head = await VideoRepresentationHead.findByPk(youtubeId);
     return {
@@ -93,6 +106,38 @@ class RepresentationStore {
     return { published, youtubeIds: new Set(rows.map(row => row.youtube_id)) };
   }
 
+  /**
+   * Videos that may show two visible entries: a published STRM record and a
+   * recorded verified local copy, or a library row with a file that is not
+   * marked removed (a download recorded only through the videos table).
+   * Two queries over the representation table plus one over the candidate
+   * videos; none beyond the first when no STRM entry is published.
+   * @param {{findLibraryFiles: function(string[]): Promise<Map<string, string>>}} deps
+   *   youtubeId -> filePath of library rows with a file that is not removed
+   * @returns {Promise<Array<{youtubeId: string, localLocations: string[]}>>}
+   */
+  async listDuplicateCandidates({ findLibraryFiles }) {
+    const published = await VideoRepresentation.findAll({
+      where: { kind: KINDS.STRM, state: STATES.PUBLISHED }, attributes: ['youtube_id'], raw: true,
+    });
+    const ids = [...new Set(published.map(row => row.youtube_id))];
+    if (ids.length === 0) return [];
+    const locals = await VideoRepresentation.findAll({
+      where: { kind: KINDS.LOCAL, state: STATES.VERIFIED, youtube_id: { [Op.in]: ids } },
+      attributes: ['youtube_id', 'location'], raw: true,
+    });
+    const library = await findLibraryFiles(ids);
+    const byId = new Map();
+    const add = (youtubeId, location) => {
+      if (!location) return;
+      if (!byId.has(youtubeId)) byId.set(youtubeId, new Set());
+      byId.get(youtubeId).add(location);
+    };
+    for (const row of locals) add(row.youtube_id, row.location);
+    for (const [youtubeId, location] of library) add(youtubeId, location);
+    return ids.filter(id => byId.has(id)).map(id => ({ youtubeId: id, localLocations: [...byId.get(id)] }));
+  }
+
   // INSERT IGNORE: a concurrent first caller may create the row too. Outside a
   // transaction, so a lost race is a duplicate (ignored), not a deadlock; one
   // that still deadlocks is tried once more.
@@ -122,15 +167,14 @@ class RepresentationStore {
     const deadline = Date.now() + waitMs;
     await this._ensureHead(youtubeId);
     for (;;) {
-      const now = new Date();
       // lease_owner is new on every attempt, so a successful claim always
       // changes the row (mysql2 counts changed rows, not matched ones).
       const [claimed] = await VideoRepresentationHead.update(
-        { lease_owner: owner, lease_operation: operation, lease_expires_at: new Date(now.getTime() + ttl), updated_at: now },
+        { lease_owner: owner, lease_operation: operation, lease_expires_at: dbExpiry(ttl), updated_at: literal(DB_NOW) },
         {
           where: {
             youtube_id: youtubeId,
-            [Op.or]: [{ lease_owner: null }, { lease_expires_at: null }, { lease_expires_at: { [Op.lt]: now } }],
+            [Op.or]: [{ lease_owner: null }, { lease_expires_at: null }, { lease_expires_at: { [Op.lt]: literal(DB_NOW) } }],
           },
           retry: SINGLE_ATTEMPT,
         }
@@ -149,13 +193,18 @@ class RepresentationStore {
    * Confirm the caller still owns the lease and extend it, right before a
    * filesystem change: a holder that paused past its lease must not change
    * files after another operation took the episode over.
+   *
+   * Conditional on the owner only, deliberately not on expiry: an expired
+   * lease that nobody took over is still exclusively ours (a takeover writes
+   * a new random owner, which this update then no longer matches), so
+   * renewing it is as safe as renewing in time. Expiry only decides whether
+   * someone else MAY take the lease, in acquireLease.
    * @throws {RepresentationLeaseError} code LEASE_LOST
    */
   async renewLease(lease) {
     const ttl = LEASE_TTL_MS[lease.operation] || DEFAULT_LEASE_TTL_MS;
-    const now = new Date();
     const [renewed] = await VideoRepresentationHead.update(
-      { lease_expires_at: new Date(now.getTime() + ttl), updated_at: now },
+      { lease_expires_at: dbExpiry(ttl), updated_at: literal(DB_NOW) },
       { where: { youtube_id: lease.youtubeId, lease_owner: lease.owner }, retry: SINGLE_ATTEMPT }
     );
     if (renewed === 1) return;
@@ -177,6 +226,9 @@ class RepresentationStore {
 
   // Runs work in a transaction holding the head row, after checking the
   // caller still owns the lease (it may have expired and been taken over).
+  // Ownership, not expiry, is checked (as in renewLease): the row lock held
+  // until commit blocks a takeover's conditional update, so an owner match
+  // here stays true for the whole transaction.
   async _underLease(lease, work, { expectedRevision } = {}) {
     return sequelize.transaction(async (transaction) => {
       const options = { transaction, retry: SINGLE_ATTEMPT };
