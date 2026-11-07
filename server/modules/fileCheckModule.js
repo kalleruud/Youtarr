@@ -6,6 +6,7 @@ const createLimiter = require('./subscriptionImport/concurrencyLimiter');
 const { REMOVAL_REASONS, REMOVAL_COLUMNS, removedColumns, presentColumns } = require('./videoRemovalState');
 const { checkLibraryRoot, isRowUnderLibraryCheck } = require('./libraryRootCheck');
 const configModule = require('./configModule');
+const maintenanceLease = require('./maintenanceLease');
 
 // Per-video checks run concurrently up to this bound: each stat costs a full
 // round trip on network-backed mounts (NAS, WSL drvfs), so checking a
@@ -69,6 +70,9 @@ class FileCheckModule {
    *   (see libraryRootCheck): those rows are left as they are and counted in `heldBack`.
    */
   async checkVideoFiles(videos) {
+    // A library migration moves files before it updates their rows; checking
+    // in between would mark moved videos missing.
+    if (maintenanceLease.isActive()) return { videos: [...videos], updates: [], libraryWarning: null };
     const updatedVideos = [...videos];
     const limit = createLimiter(MAX_CONCURRENT_FILE_CHECKS);
     // One slot per video keeps `updates` in input order no matter which
@@ -198,4 +202,4 @@ class FileCheckModule {
   }
 }
 
-module.exports = new FileCheckModule();
+module.exports = maintenanceLease.trackMethods(new FileCheckModule(), ['checkVideoFiles', 'applyVideoUpdates'], ['checkVideoFiles']);

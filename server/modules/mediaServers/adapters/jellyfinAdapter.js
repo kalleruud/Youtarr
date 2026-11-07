@@ -134,12 +134,21 @@ class JellyfinAdapter extends BaseAdapter {
   // userId is supplied (API-key auth returns no UserData otherwise). A failed
   // /Users fetch fails the whole call: silently syncing nobody would
   // masquerade as an empty success.
-  async fetchWatchStates() {
+  //
+  // `strict` (the TV library migration snapshot only) fails the whole call
+  // instead of reporting a user as incomplete: every page must carry an Items
+  // array and an integer TotalRecordCount that stays the same across pages,
+  // no item may repeat, and the listing must reach exactly that total. A
+  // server that omits TotalRecordCount cannot be snapshotted.
+  async fetchWatchStates({ strict = false } = {}) {
     try {
       let users = [];
       let targets;
       if (this.allUsers) {
         const res = await axios.get(`${this.url}/Users`, { headers: this._headers(), timeout: REQUEST_TIMEOUT_MS });
+        if (strict && (!Array.isArray(res.data) || !res.data.every((u) => u && u.Id))) {
+          throw new Error('Incomplete Jellyfin watch-state snapshot: malformed user listing');
+        }
         users = (res.data || []).map((u) => ({ id: String(u.Id), name: u.Name || null }));
         targets = users;
       } else {
@@ -148,7 +157,9 @@ class JellyfinAdapter extends BaseAdapter {
       const entries = [];
       const completeUserIds = [];
       for (const user of targets) {
-        const { items, complete } = await this._listItemsWithWatchState(user.id);
+        const { items, complete } = strict
+          ? await this._listItemsWithWatchStateStrict(user.id)
+          : await this._listItemsWithWatchState(user.id);
         for (const item of items) {
           if (item.Path) entries.push(this._itemWatchState(item, user.id));
         }
@@ -194,6 +205,7 @@ class JellyfinAdapter extends BaseAdapter {
         };
         const res = await axios.get(`${this.url}/Items`, { headers: this._headers(), params, timeout: REQUEST_TIMEOUT_MS });
         const page = res.data?.Items || [];
+        const total = res.data?.TotalRecordCount;
         let added = 0;
         for (const item of page) {
           if (seen.has(item.Id)) continue;
@@ -202,8 +214,13 @@ class JellyfinAdapter extends BaseAdapter {
           if (!itemsById.has(item.Id)) itemsById.set(item.Id, item);
         }
         // A short page ends the listing; a longer one means the server
-        // ignored limit and returned everything.
-        if (page.length !== WATCH_STATE_PAGE_SIZE) break;
+        // ignored limit and returned everything. When the server reports a
+        // total, a listing that ends short of it (or past it) is incomplete,
+        // so stored watch state is kept rather than reset.
+        if (page.length !== WATCH_STATE_PAGE_SIZE) {
+          if (Number.isInteger(total) && seen.size !== total) complete = false;
+          break;
+        }
         if (added === 0) {
           complete = false;
           break;
@@ -211,6 +228,26 @@ class JellyfinAdapter extends BaseAdapter {
       }
     }
     return { items: [...itemsById.values()], complete };
+  }
+
+  // Strict variant for the migration snapshot: any page that does not add up
+  // throws, so a partial listing can never be reported as complete.
+  async _listItemsWithWatchStateStrict(userId) {
+    const itemsById = new Map();
+    for (const filter of WATCH_STATE_FILTERS) {
+      const items = await this._migrationItems('/Items', {
+        userId,
+        includeItemTypes: 'Video,Movie,Episode',
+        collapseBoxSetItems: false,
+        recursive: true,
+        fields: 'Path',
+        enableUserData: true,
+        sortBy: 'SortName',
+        ...filter,
+      }, 'watch-state');
+      for (const item of items) if (!itemsById.has(item.Id)) itemsById.set(item.Id, item);
+    }
+    return { items: [...itemsById.values()], complete: true };
   }
 
   _itemWatchState(item, serverUserId) {
@@ -232,6 +269,109 @@ class JellyfinAdapter extends BaseAdapter {
       percentWatched,
       lastWatchedAt: ud.LastPlayedDate ? new Date(ud.LastPlayedDate) : null,
     };
+  }
+
+  // ---- Library migration (tvMigration) only. Routine watch-status sync
+  // stays read-only; these are called only when a user restores the state a
+  // migration snapshotted.
+
+  /** Every Episode item with its file path, paged: [{ id, path }]. */
+  async listEpisodePaths() {
+    const items = [];
+    for (let startIndex = 0; ; startIndex += WATCH_STATE_PAGE_SIZE) {
+      const params = {
+        userId: this.userId, includeItemTypes: 'Episode', recursive: true, fields: 'Path',
+        sortBy: 'SortName', startIndex, limit: WATCH_STATE_PAGE_SIZE,
+      };
+      const res = await axios.get(`${this.url}/Items`, { headers: this._headers(), params, timeout: REQUEST_TIMEOUT_MS });
+      const page = res.data?.Items || [];
+      for (const item of page) if (item.Path) items.push({ id: item.Id, path: item.Path });
+      if (page.length !== WATCH_STATE_PAGE_SIZE) break;
+    }
+    return items;
+  }
+
+  /**
+   * Playlists each user can see, with their entries in order:
+   * [{ id, name, userId, entries: [{ itemId, path }] }]. A playlist visible
+   * to several users is listed once, under the first of them.
+   */
+  async listUserPlaylists(userIds) {
+    const playlists = new Map();
+    for (const userId of userIds) {
+      const items = await this._migrationItems('/Items', { userId, includeItemTypes: 'Playlist', recursive: true });
+      for (const playlist of items) {
+        if (playlists.has(playlist.Id)) continue;
+        const entries = (await this._migrationItems(`/Playlists/${encodeURIComponent(playlist.Id)}/Items`, { userId, fields: 'Path' }))
+          .map((item) => ({ itemId: item.Id, path: item.Path || null }));
+        playlists.set(playlist.Id, { id: playlist.Id, name: playlist.Name || null, userId, entries });
+      }
+    }
+    return [...playlists.values()];
+  }
+
+  // Migration must never treat a truncated, repeated or inconsistent page as
+  // a complete snapshot: every page needs Items and the same integer
+  // TotalRecordCount, items never repeat, an empty page before the total is
+  // reached fails, and the listing must end exactly at the total.
+  async _migrationItems(endpoint, params, what = 'playlist') {
+    const fail = (reason) => new Error(`Incomplete Jellyfin ${what} snapshot: ${reason}`);
+    const items = [];
+    const seen = new Set();
+    let expected = null;
+    // The next page starts after what arrived, so a server that caps pages
+    // below the limit is still read in full.
+    for (;;) {
+      const res = await axios.get(`${this.url}${endpoint}`, {
+        headers: this._headers(), params: { ...params, startIndex: items.length, limit: WATCH_STATE_PAGE_SIZE }, timeout: REQUEST_TIMEOUT_MS,
+      });
+      const page = res.data?.Items;
+      const total = res.data?.TotalRecordCount;
+      if (!Array.isArray(page) || !Number.isInteger(total) || total < 0) throw fail('missing count or items');
+      if (expected === null) expected = total;
+      else if (total !== expected) throw fail('total changed between pages');
+      for (const item of page) {
+        const key = item && (item.PlaylistItemId || item.Id);
+        if (!key || seen.has(key)) throw fail('repeated page or item');
+        seen.add(key);
+        items.push(item);
+      }
+      if (items.length === total) return items;
+      if (!page.length || items.length > total) throw fail('inconsistent pagination');
+    }
+  }
+
+  /** Item ids currently in a playlist, in order. */
+  async listPlaylistItemIds(playlistId, userId) {
+    return (await this._migrationItems(`/Playlists/${encodeURIComponent(playlistId)}/Items`, { userId })).map((item) => item.Id);
+  }
+
+  async addPlaylistItems(playlistId, itemIds, userId) {
+    if (itemIds.length === 0) return;
+    await axios.post(`${this.url}/Playlists/${encodeURIComponent(playlistId)}/Items`, null, {
+      headers: this._headers(), params: { ids: itemIds.join(','), userId }, timeout: REQUEST_TIMEOUT_MS,
+    });
+  }
+
+  /**
+   * Write one user's played flag, play count, resume position and last
+   * played date for an item. Jellyfin 10.9+ takes /UserItems/{id}/UserData;
+   * older servers only the /Users/{userId}/Items/{id}/UserData form.
+   */
+  async setUserData(itemId, userId, state) {
+    const body = {
+      Played: Boolean(state.played),
+      PlayCount: Number.isFinite(state.playCount) ? state.playCount : 0,
+      PlaybackPositionTicks: Number.isFinite(state.positionMs) ? Math.round(state.positionMs * TICKS_PER_MS) : 0,
+      ...(state.lastWatchedAt ? { LastPlayedDate: new Date(state.lastWatchedAt).toISOString() } : {}),
+    };
+    const options = { headers: this._headers(), timeout: REQUEST_TIMEOUT_MS };
+    try {
+      await axios.post(`${this.url}/UserItems/${encodeURIComponent(itemId)}/UserData`, body, { ...options, params: { userId } });
+    } catch (err) {
+      if (err.response?.status !== 404) throw err;
+      await axios.post(`${this.url}/Users/${encodeURIComponent(userId)}/Items/${encodeURIComponent(itemId)}/UserData`, body, options);
+    }
   }
 
   async createPlaylist(name, itemIds, opts = {}) {

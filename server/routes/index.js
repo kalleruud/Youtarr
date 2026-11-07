@@ -26,6 +26,8 @@ const createSubfolderRoutes = require('./subfolders');
 const createSchedulesRoutes = require('./schedules');
 const createLogRoutes = require('./logs');
 const createVideoTrashRoutes = require('./videoTrash');
+const createTvMigrationRoutes = require('./tvMigration');
+const tvMigration = require('../modules/tvMigration');
 const videoMetadataModule = require('../modules/videoMetadataModule');
 const videoTrashModule = require('../modules/videoTrashModule');
 const videoOembedEnricher = require('../modules/videoOembedEnricher');
@@ -117,6 +119,9 @@ function registerRoutes(app, deps) {
 
   // Trash routes: deleted and missing videos (counts, mark as deleted, purge)
   app.use(createVideoTrashRoutes({ verifyToken, videoTrashModule, jobModule }));
+
+  // Jellyfin TV library migration of existing downloads (preview, apply, resume, rollback, restore)
+  app.use(createTvMigrationRoutes({ verifyToken, tvMigration }));
 
   // Video search routes
   app.use(createVideoSearchRoutes({ verifyToken, videoSearchModule }));

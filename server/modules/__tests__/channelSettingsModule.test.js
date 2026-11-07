@@ -1219,6 +1219,21 @@ describe('ChannelSettingsModule', () => {
       Video.findAll.mockResolvedValue([]);
     });
 
+    test('migration cannot acquire while a subfolder move awaits filesystem completion', async () => {
+      const lease = require('../maintenanceLease');
+      fs.existsSync.mockReturnValueOnce(true).mockReturnValueOnce(false);
+      let finish;
+      let entered;
+      const moving = new Promise((resolve) => { entered = resolve; });
+      fs.move.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; entered(); }));
+      const operation = channelSettingsModule.moveChannelFolder(channel, null, 'Music');
+      await moving;
+      expect(() => lease.acquire('migration', 'moving')).toThrow(/writes are in progress/);
+      finish();
+      await operation;
+      expect(lease.operations.size).toBe(0);
+    });
+
     test('should move folder from root to subfolder', async () => {
       fs.existsSync
         .mockReturnValueOnce(true)  // Old folder exists

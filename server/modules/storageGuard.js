@@ -4,6 +4,7 @@ const configModule = require('./configModule');
 const storageUsage = require('./storageUsage');
 const notificationModule = require('./notificationModule');
 const MessageEmitter = require('./messageEmitter');
+const maintenanceLease = require('./maintenanceLease');
 
 const DOWNLOADS_PAUSED_CODE = 'DOWNLOADS_PAUSED';
 // While paused, re-measure periodically so space freed outside Youtarr
@@ -132,6 +133,15 @@ class StorageGuard extends EventEmitter {
    * @returns {Promise<void>}
    */
   async assertDownloadsAllowed() {
+    // A library migration holds the maintenance lease; downloads would
+    // publish into folders it is moving.
+    if (maintenanceLease.isActive()) {
+      throw new DownloadsPausedError({
+        ...this.getStatus(),
+        paused: true,
+        reasons: [{ type: 'maintenance', text: maintenanceLease.current().reason }],
+      });
+    }
     const status = await this.refresh();
     if (status.paused) {
       throw new DownloadsPausedError(status);

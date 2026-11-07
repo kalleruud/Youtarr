@@ -1,3 +1,4 @@
+const maintenanceLease = require('./maintenanceLease');
 const os = require('os');
 const { normalizeUrlToVideoId } = require('./youtubeUrlParser');
 const configModule = require('./configModule');
@@ -1253,4 +1254,4 @@ class DownloadModule {
   }
 }
 
-module.exports = new DownloadModule();
+module.exports = maintenanceLease.trackMethods(new DownloadModule(), ['doChannelDownloads', 'doChannelAndPlaylistDownloads', 'doSingleChannelDownloadJob', 'doGroupedChannelDownloads', 'executeGroupDownload', 'doSpecificDownloads', 'doGroupedManualDownloads', 'doPlaylistDownloads', 'afterDownloadHook'], []);

@@ -510,4 +510,134 @@ describe('JellyfinAdapter', () => {
       expect(result).toEqual({ status: 'failed', message: expect.stringContaining('status code 500') });
     });
   });
+
+  describe('library migration helpers', () => {
+    test('setUserData writes played, count, position in ticks and last played date', async () => {
+      axios.post.mockResolvedValueOnce({});
+      await new JellyfinAdapter(cfg).setUserData('item1', 'u1', { played: false, playCount: 1, positionMs: 61000, lastWatchedAt: '2026-01-01T00:00:00.000Z' });
+      expect(axios.post.mock.calls[0].slice(0, 2)).toEqual(['http://jf:8096/UserItems/item1/UserData', {
+        Played: false, PlayCount: 1, PlaybackPositionTicks: 610000000, LastPlayedDate: '2026-01-01T00:00:00.000Z',
+      }]);
+    });
+
+    test('setUserData falls back to the pre-10.9 endpoint on 404', async () => {
+      axios.post.mockRejectedValueOnce(Object.assign(new Error('nf'), { response: { status: 404 } })).mockResolvedValueOnce({});
+      await new JellyfinAdapter(cfg).setUserData('item1', 'u1', { played: true, playCount: 1 });
+      expect(axios.post.mock.calls[1][0]).toBe('http://jf:8096/Users/u1/Items/item1/UserData');
+    });
+
+    test('setUserData rethrows other failures', async () => {
+      axios.post.mockRejectedValueOnce(Object.assign(new Error('denied'), { response: { status: 403 } }));
+      await expect(new JellyfinAdapter(cfg).setUserData('item1', 'u1', { played: true })).rejects.toThrow('denied');
+    });
+
+    test('listEpisodePaths pages through episodes', async () => {
+      const fullPage = Array.from({ length: 1000 }, (_, i) => ({ Id: `e${i}`, Path: `/tv/${i}.mp4` }));
+      axios.get.mockResolvedValueOnce({ data: { Items: fullPage } }).mockResolvedValueOnce({ data: { Items: [{ Id: 'last', Path: '/tv/last.mp4' }] } });
+      const items = await new JellyfinAdapter(cfg).listEpisodePaths();
+      expect([items.length, axios.get.mock.calls[1][1].params.startIndex]).toEqual([1001, 1000]);
+    });
+
+    test('listUserPlaylists lists each playlist once with its entry paths', async () => {
+      axios.get
+        .mockResolvedValueOnce({ data: { TotalRecordCount: 1, Items: [{ Id: 'p1', Name: 'Mine' }] } })
+        .mockResolvedValueOnce({ data: { TotalRecordCount: 1, Items: [{ Id: 'i1', Path: '/m/a [x].mp4' }] } })
+        .mockResolvedValueOnce({ data: { TotalRecordCount: 1, Items: [{ Id: 'p1', Name: 'Mine' }] } });
+      expect(await new JellyfinAdapter(cfg).listUserPlaylists(['u1', 'u2'])).toEqual([
+        { id: 'p1', name: 'Mine', userId: 'u1', entries: [{ itemId: 'i1', path: '/m/a [x].mp4' }] },
+      ]);
+    });
+
+    test('refuses truncated playlist entries', async () => {
+      axios.get.mockResolvedValueOnce({ data: { TotalRecordCount: 1, Items: [{ Id: 'p1' }] } })
+        .mockResolvedValueOnce({ data: { TotalRecordCount: 2, Items: [{ Id: 'i1' }] } })
+        .mockResolvedValueOnce({ data: { TotalRecordCount: 2, Items: [] } });
+      await expect(new JellyfinAdapter(cfg).listUserPlaylists(['u1'])).rejects.toThrow('inconsistent pagination');
+    });
+
+    test('refuses repeated playlist pages', async () => {
+      axios.get.mockResolvedValue({ data: { TotalRecordCount: 2, Items: [{ Id: 'p1' }] } });
+      await expect(new JellyfinAdapter(cfg).listUserPlaylists(['u1'])).rejects.toThrow('repeated page');
+    });
+
+    test('addPlaylistItems sends the ids as one comma list', async () => {
+      axios.post.mockResolvedValueOnce({});
+      await new JellyfinAdapter(cfg).addPlaylistItems('p1', ['a', 'b'], 'u1');
+      expect(axios.post.mock.calls[0][2].params).toEqual({ ids: 'a,b', userId: 'u1' });
+    });
+
+    test('addPlaylistItems does nothing for an empty list', async () => {
+      await new JellyfinAdapter(cfg).addPlaylistItems('p1', [], 'u1');
+      expect(axios.post).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('JellyfinAdapter watch-state page totals', () => {
+  const cfg = { jellyfinUrl: 'http://jf:8096', jellyfinApiKey: 'KEY', jellyfinUserId: 'USR' };
+  const item = (id) => ({ Id: id, Path: `/m/${id} [${id.padEnd(11, 'x')}].mp4`, UserData: { Played: true } });
+
+  // Watched listing pages from `watched(startIndex)`, in-progress from `resumable(startIndex)`.
+  const serve = ({ watched, resumable = () => ({ TotalRecordCount: 0, Items: [] }), users = [{ Id: 'u1', Name: 'One' }] }) => {
+    axios.get.mockImplementation(async (url, { params }) => {
+      if (url.endsWith('/Users')) return { data: users };
+      return { data: params.isPlayed ? watched(params.startIndex) : resumable(params.startIndex) };
+    });
+  };
+
+  beforeEach(() => axios.get.mockReset());
+
+  test('routine sync does not report a user complete when a short page ends below TotalRecordCount', async () => {
+    serve({ watched: () => ({ TotalRecordCount: 2, Items: [item('a')] }) });
+    const { entries, completeUserIds } = await new JellyfinAdapter(cfg).fetchWatchStates();
+    expect({ entries: entries.length, completeUserIds }).toEqual({ entries: 1, completeUserIds: [] });
+  });
+
+  test('routine sync still reports a user complete when the total matches', async () => {
+    serve({ watched: () => ({ TotalRecordCount: 1, Items: [item('a')] }) });
+    const { completeUserIds } = await new JellyfinAdapter(cfg).fetchWatchStates();
+    expect(completeUserIds).toEqual(['u1']);
+  });
+
+  test('strict mode refuses a short page below TotalRecordCount', async () => {
+    serve({ watched: (start) => ({ TotalRecordCount: 2, Items: start === 0 ? [item('a')] : [] }) });
+    await expect(new JellyfinAdapter(cfg).fetchWatchStates({ strict: true })).rejects.toThrow('inconsistent pagination');
+  });
+
+  test('strict mode refuses a listing without TotalRecordCount', async () => {
+    serve({ watched: () => ({ Items: [item('a')] }) });
+    await expect(new JellyfinAdapter(cfg).fetchWatchStates({ strict: true })).rejects.toThrow('missing count or items');
+  });
+
+  test('strict mode refuses a malformed page', async () => {
+    serve({ watched: () => ({ TotalRecordCount: 1, Items: null }) });
+    await expect(new JellyfinAdapter(cfg).fetchWatchStates({ strict: true })).rejects.toThrow('missing count or items');
+  });
+
+  test('strict mode refuses a repeated page', async () => {
+    serve({ watched: () => ({ TotalRecordCount: 2, Items: [item('a')] }) });
+    await expect(new JellyfinAdapter(cfg).fetchWatchStates({ strict: true })).rejects.toThrow('repeated page or item');
+  });
+
+  test('strict mode refuses a total that changes between pages', async () => {
+    serve({ watched: (start) => (start === 0 ? { TotalRecordCount: 3, Items: [item('a')] } : { TotalRecordCount: 2, Items: [item('b')] }) });
+    await expect(new JellyfinAdapter(cfg).fetchWatchStates({ strict: true })).rejects.toThrow('total changed between pages');
+  });
+
+  test('strict mode refuses a malformed user listing', async () => {
+    serve({ users: { Items: [] }, watched: () => ({ TotalRecordCount: 0, Items: [] }) });
+    await expect(new JellyfinAdapter(cfg).fetchWatchStates({ strict: true })).rejects.toThrow('malformed user listing');
+  });
+
+  test('strict mode reads pages a server caps below the limit, from where the last one ended', async () => {
+    serve({ watched: (start) => ({ TotalRecordCount: 2, Items: [item(start === 0 ? 'a' : 'b')] }) });
+    const { entries, completeUserIds } = await new JellyfinAdapter(cfg).fetchWatchStates({ strict: true });
+    expect({ entries: entries.length, completeUserIds }).toEqual({ entries: 2, completeUserIds: ['u1'] });
+  });
+
+  test('strict mode accepts empty listings that report zero', async () => {
+    serve({ watched: () => ({ TotalRecordCount: 0, Items: [] }) });
+    const { completeUserIds } = await new JellyfinAdapter(cfg).fetchWatchStates({ strict: true });
+    expect(completeUserIds).toEqual(['u1']);
+  });
 });

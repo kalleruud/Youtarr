@@ -6,6 +6,7 @@ Complete guide for integrating Youtarr with Jellyfin Media Server.
 - [Overview](#overview)
 - [Library Setup](#library-setup)
 - [Jellyfin TV (Shows) Output](#jellyfin-tv-shows-output)
+- [Migrating Existing Downloads to the TV Layout](#migrating-existing-downloads-to-the-tv-layout)
 - [Metadata Configuration](#metadata-configuration)
 - [Native Playlist Sync](#native-playlist-sync)
 - [Channel Playlist Files (.m3u)](#channel-playlist-files-m3u)
@@ -101,7 +102,43 @@ With `libraryOutputProfile` set to `jellyfinTv` (Settings -> Core -> Library Out
 
 Recommended library settings for the YouTube Shows library: Content Type **Shows**; enable the **Nfo** metadata reader; disable the **Nfo** metadata saver; disable every remote metadata downloader and image fetcher (no TheTVDB/TMDb matching for YouTube channels); mount the media folder read-only in the Jellyfin container. Jellyfin's real-time monitoring picks up new episodes; Youtarr does not yet send Jellyfin a targeted refresh after publishing.
 
-Not covered yet: moving existing downloads into this layout (with their watch state). Empty `Season <year>` folders left after deleting a season's last episode are not cleaned up automatically.
+Existing downloads are not moved by this setting; see [Migrating Existing Downloads to the TV Layout](#migrating-existing-downloads-to-the-tv-layout). Empty `Season <year>` folders left after deleting a season's last episode are not cleaned up automatically.
+
+## Migrating Existing Downloads to the TV Layout
+
+Settings -> Maintenance -> **Move existing downloads into the TV library** moves videos already downloaded in the regular (movie) layout into the TV layout above. Nothing is downloaded again and no request goes to YouTube: episode metadata comes from the cached `jobs/info/<id>.info.json`, or from the database row when that file is gone.
+
+**1. Preview.** The preview writes an immutable plan and changes nothing on disk, in the library or in Jellyfin. It lists, per video, the old and new path of the media file, its subtitles and thumbnail, and the files the TV layout has no place for (the movie `.nfo`, `-fanart.jpg`, `-backdrop.jpg`), which are kept with the plan instead of in the library. It explains every video that will stay where it is:
+
+| Reason | Meaning |
+|---|---|
+| `date-required` | No publication date, so no season/episode can be assigned |
+| `target-exists`, `duplicate-target` | Something already uses the new name |
+| `already-published` | A TV copy of the video already exists; the movie copy is left alone |
+| `multiple-media` | Two video files for one video in the same folder |
+| `outside-library`, `unexpected-layout` | The file is not in a channel folder of the downloads folder or a `__subfolder` |
+| `not-video`, `missing-media`, `no-channel` | Audio-only download, file not on disk, or no channel recorded |
+| `not-writable` | Youtarr cannot write to the folder. The migration never changes permissions; fix them yourself |
+
+Planning blocks the plan when the downloads folder looks unmounted, or when a move across drives would not fit (with a 1 GB margin). Planning allocates the stable episode numbers the same way a download would, so the plan's numbers are final. The preview also states which Jellyfin data is preserved (per user: played flag, play count, resume position, last played date, user playlist membership) and which is not (favorites, ratings and likes; restored playlist entries are appended in their original order after entries that are not Youtarr videos; Plex and Emby state).
+
+**2. Apply.** Applying needs the Library Output Profile set to Jellyfin TV, no running download, and a confirmation. It:
+
+- takes the **maintenance lease** (`config/maintenance-lease.json`): new downloads are refused, queued jobs wait, automatic cleanup, the orphan folder sweep, manual deletes, channel subfolder moves, the rescan, library repair and the page-load file check all stand aside until it is released. The lease survives a restart.
+- refuses the whole plan, before moving anything, when a planned file or database row changed since the preview (make a new preview).
+- reads Jellyfin watch state and the user playlists containing these videos and saves them with the plan. If Jellyfin is configured but cannot be read, applying is refused unless you choose to continue without that state.
+- moves video by video: show/season/episode NFOs, then subtitles and thumbnail (renamed with the episode), then the leftovers into the plan folder, then the media file, then the database row. A rename on the same drive never rewrites the bytes; a move across drives copies to a hidden staging file, compares SHA-256 hashes and only then removes the source. With "Verify checksums" on (the default), every video file is hashed before and after its move. An existing file is never overwritten. An emptied per-video folder is removed; channel folders and their artwork stay.
+- regenerates the channel and playlist `.m3u` files.
+
+Every step is checkpointed in `config/tv-migrations/<planId>/state.json`. If a move fails, or the server stops, the plan is **interrupted** and the lease stays held: fix the cause and **Resume** (it continues from the video it stopped in), or **Roll back**.
+
+**3. Switch the Jellyfin library (by hand).** Remove the Movies/Home Videos library that scans the Youtarr folder, then add a Shows library on the same folder with the settings above. Never let both library types index the same folder. If you set Jellyfin Video Library IDs in Youtarr, replace them with the new library's ID.
+
+**4. Restore viewing state.** Once Jellyfin has scanned the Shows library, **Restore Jellyfin viewing state** finds each new episode by file name and writes the saved state for each user, and adds the new episodes to the saved user playlists. It is idempotent: episodes Jellyfin has not found yet stay pending, so run it again after the scan. Once nothing is pending, Youtarr-managed playlists are re-synced to the media servers. These writes are scoped to the migration; the routine watch status sync stays read-only.
+
+**Rollback** moves every started video back, puts the leftovers back, restores the database rows, and removes the show/season NFOs the migration created where no episode is left. It does not revert viewing state already written to new Jellyfin episodes, and it does not switch the Jellyfin library back.
+
+**Before applying**, back up the `config` folder (it holds `tv-migrations/` and `config.json`) and the database. The migration does not change the database schema and touches only the `filePath` column of the migrated videos, but image rollback alone never undoes moved files. The API is documented under **Library Migration** in `/swagger`.
 
 ## Metadata Configuration
 
@@ -265,3 +302,7 @@ Organize content by type:
 ## File Structure
 
 See [docs/YOUTARR_DOWNLOADS_FOLDER_STRUCTURE.md](../YOUTARR_DOWNLOADS_FOLDER_STRUCTURE.md)
+
+Migration safety follow-up (PR #27): a watch-state snapshot requires every enumerated user in the adapter's `completeUserIds`. Playlist enumeration and entry reads require complete, non-repeating pagination with record counts. Failures stop apply before moving files unless the owner explicitly sends `acceptUserStateLoss: true`; that override records the failure diagnostics and does not claim state preservation. Verified cross-device copies record their staging inode and checksum before publication so resume/rollback can reconcile an unlink failure without deleting an unrelated identical file.
+
+Migration acquisition now refuses while tracked library writers are active; retry after they finish. New writer entry is blocked throughout the persistent lease. Preview and execution reject symlink descendants of configured roots, including source, destination, sidecar, NFO and leftover paths, and recheck after preview. Configured root symlinks and mount points remain supported. These checks assume external filesystem administrators do not replace ancestors concurrently during a filesystem syscall; they are not an OS sandbox. Independent review and real-library validation remain unperformed. Playlist restoration appends entries and rollback cannot undo restored Jellyfin state or appended entries; preservation completion does not mean exact playlist ordering or reversible Jellyfin writes.

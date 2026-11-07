@@ -1,3 +1,4 @@
+const maintenanceLease = require('../maintenanceLease');
 // Jellyfin TV publication (the `libraryOutputProfile: "jellyfinTv"` setting):
 // a channel is a show, its publication years are seasons, and each video is
 // the stable episode episodeAssignment numbered. planPublication has no
@@ -202,5 +203,5 @@ class TvPublication {
   }
 }
 
-module.exports = new TvPublication();
+module.exports = maintenanceLease.trackMethods(new TvPublication(), ['publish', 'publishDownload', 'regenerateMetadata']);
 module.exports.TvPublicationError = TvPublicationError;

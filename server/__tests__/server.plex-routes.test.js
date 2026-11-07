@@ -201,6 +201,8 @@ const setupServer = async ({ authEnabled = 'false', passwordHash = null } = {}) 
   jest.doMock('../modules/acquisition/acquisitionPolicyService', () => ({ AcquisitionPolicyError: class extends Error {} }));
 
   jest.doMock('../modules/tvPublication', () => ({ isEnabled: jest.fn(() => false), regenerateMetadata: jest.fn() }));
+
+  jest.doMock('../modules/tvMigration', () => ({ setDownloadActivityCheck: jest.fn(), initialize: jest.fn().mockResolvedValue(undefined), list: jest.fn() }));
   jest.doMock('../modules/channelArtworkModule', () => ({ isEnabled: jest.fn(() => false), syncChannel: jest.fn(), ArtworkValidationError: class extends Error {} }));
   const serverModule = require('../server');
   await serverModule.initialize();

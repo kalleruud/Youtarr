@@ -1,3 +1,4 @@
+const maintenanceLease = require('../maintenanceLease');
 const { spawnYtDlp } = require('../ytdlpProcess');
 const path = require('path');
 const configModule = require('../configModule');
@@ -160,9 +161,9 @@ class DownloadExecutor {
   }
 
   async doDownload(args, jobId, jobType, urlCount = 0, originalUrls = null, allowRedownload = false, skipJobTransition = false, postProcessDirectives = {}) {
-    return archiveAccess.withDownload(() => this.runDownload(
+    return maintenanceLease.runOperation(() => archiveAccess.withDownload(() => this.runDownload(
       args, jobId, jobType, urlCount, originalUrls, allowRedownload, skipJobTransition, postProcessDirectives
-    ));
+    )));
   }
 
   async runDownload(args, jobId, jobType, urlCount, originalUrls, allowRedownload, skipJobTransition, postProcessDirectives) {

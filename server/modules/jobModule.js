@@ -18,6 +18,7 @@ const { isDownloadJob, isSpecificUrlDownloadJob } = require('./download/jobTypes
 const downloadCleanup = require('./download/downloadCleanup');
 const { serializeAuxData, parseAuxData } = require('./jobAuxData');
 const storageGuard = require('./storageGuard');
+const maintenanceLease = require('./maintenanceLease');
 const { unchangedSinceRead } = require('./videoRowGuard');
 const { REMOVAL_REASONS, removedColumns, presentColumns } = require('./videoRemovalState');
 const videosModule = require('./videosModule');
@@ -81,6 +82,14 @@ class JobModule {
       if (this.getInProgressJobId()) return;
       this.startNextJob().catch((err) => {
         logger.error({ err }, 'Failed to start queued job after downloads resumed');
+      });
+    });
+
+    // Jobs held during a library migration start once it releases the lease.
+    maintenanceLease.on('released', () => {
+      if (this.getInProgressJobId()) return;
+      this.startNextJob().catch((err) => {
+        logger.error({ err }, 'Failed to start queued job after library maintenance finished');
       });
     });
 
@@ -480,6 +489,10 @@ class JobModule {
 
   async _startNextJob() {
     logger.info('Looking for next job to start');
+    if (maintenanceLease.isActive()) {
+      logger.info({ reason: maintenanceLease.current().reason }, 'Library maintenance is running; holding queued jobs');
+      return;
+    }
     // Re-checking here also runs after every finished job, so crossing a
     // storage limit pauses downloads (and alerts the user) right away.
     // A failed check fails open, like the guard's own measurements.
@@ -806,6 +819,9 @@ class JobModule {
   async backfillFromCompleteList() {
     if (this._archiveRepairRunning) {
       return { status: 'skipped', outcome: 'skipped', message: 'A library repair was already running.' };
+    }
+    if (maintenanceLease.isActive()) {
+      return { status: 'skipped', outcome: 'skipped', message: `${maintenanceLease.describe()}.` };
     }
     this._archiveRepairRunning = true;
     try {
@@ -1410,4 +1426,4 @@ class JobModule {
   }
 }
 
-module.exports = new JobModule();
+module.exports = maintenanceLease.trackMethods(new JobModule(), ['backfillFromCompleteList', '_repairFromArchive'], ['backfillFromCompleteList']);

@@ -1,3 +1,4 @@
+const maintenanceLease = require('./maintenanceLease');
 const fs = require('fs-extra');
 const path = require('path');
 const crypto = require('crypto');
@@ -397,5 +398,5 @@ class ChannelArtworkModule {
   }
 }
 
-module.exports = new ChannelArtworkModule();
+module.exports = maintenanceLease.trackMethods(new ChannelArtworkModule(), ['publishPoster', 'uploadManualPoster', 'updatePreference', 'resetPoster', 'regenerate', 'applyChange', 'republishEpisodeThumbs', 'syncChannel']);
 module.exports.ArtworkValidationError = ArtworkValidationError;

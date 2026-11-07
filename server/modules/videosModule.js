@@ -20,6 +20,7 @@ const { unchangedSinceRead, GUARDED_COLUMNS } = require('./videoRowGuard');
 const youtubeExistenceCheck = require('./youtubeExistenceCheck');
 const { LIBRARY_CHECK_REASONS, checkLibraryRoot, isRowUnderLibraryCheck, libraryCheckCoversRows } = require('./libraryRootCheck');
 const { REMOVAL_STATES, stateWhere, notStateWhere } = require('./videoRemovalState');
+const maintenanceLease = require('./maintenanceLease');
 
 const { EXISTENCE } = youtubeExistenceCheck;
 
@@ -572,6 +573,11 @@ class VideosModule {
       logger.info({ trigger }, 'Backfill already running, skipping');
       return { skipped: true, reason: 'already-running' };
     }
+    // A library migration moves files before it updates their rows.
+    if (maintenanceLease.isActive()) {
+      logger.info({ trigger }, 'Library maintenance is running; skipping the rescan');
+      return { skipped: true, reason: 'maintenance', message: maintenanceLease.describe() };
+    }
     this._backfillRunning = true;
 
     const startTime = Date.now();
@@ -904,4 +910,4 @@ class VideosModule {
   }
 }
 
-module.exports = new VideosModule();
+module.exports = maintenanceLease.trackMethods(new VideosModule(), ['backfillVideoMetadata'], ['backfillVideoMetadata']);

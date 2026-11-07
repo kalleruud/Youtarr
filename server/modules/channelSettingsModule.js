@@ -2,6 +2,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const Channel = require('../models/channel');
 const configModule = require('./configModule');
+const maintenanceLease = require('./maintenanceLease');
 const plexModule = require('./plexModule');
 const { Op } = require('sequelize');
 const logger = require('../logger');
@@ -996,6 +997,8 @@ class ChannelSettingsModule {
    * @returns {Promise<Object>} - Result of move operation
    */
   async moveChannelFolder(channel, oldSubFolder, newSubFolder) {
+    // A library migration is moving this library; the caller rolls the setting back.
+    maintenanceLease.assertInactive();
     const baseDir = configModule.directoryPath;
     const channelName = resolveChannelFolderName(channel);
 
@@ -1135,4 +1138,4 @@ class ChannelSettingsModule {
   }
 }
 
-module.exports = new ChannelSettingsModule();
+module.exports = maintenanceLease.trackMethods(new ChannelSettingsModule(), ['moveChannelFolder', 'updateVideoFilePaths'], []);

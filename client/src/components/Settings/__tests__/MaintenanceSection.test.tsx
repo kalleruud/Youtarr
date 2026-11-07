@@ -15,6 +15,14 @@ jest.mock('../hooks/useRemovedVideos', () => ({
   useRemovedVideos: jest.fn()
 }));
 
+jest.mock('../hooks/useTvLibraryMigration', () => ({
+  isBusy: () => false,
+  useTvLibraryMigration: () => ({
+    plan: null, loading: false, error: null, actionPending: false, actionError: null,
+    preview: jest.fn(), apply: jest.fn(), resume: jest.fn(), rollback: jest.fn(), restoreUserState: jest.fn(),
+  }),
+}));
+
 const { useRescanStatus } = require('../../../hooks/useRescanStatus') as {
   useRescanStatus: jest.Mock<UseRescanStatusReturn, [string | null]>;
 };

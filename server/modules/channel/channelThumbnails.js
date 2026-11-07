@@ -1,3 +1,4 @@
+const maintenanceLease = require('../maintenanceLease');
 const fs = require('fs-extra');
 const fsPromises = fs.promises;
 const path = require('path');
@@ -316,4 +317,4 @@ class ChannelThumbnails {
   }
 }
 
-module.exports = new ChannelThumbnails();
+module.exports = maintenanceLease.trackMethods(new ChannelThumbnails(), ['backfillChannelImages', 'processChannelThumbnail', 'processChannelBanner']);

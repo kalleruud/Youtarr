@@ -95,7 +95,7 @@ YouTube Downloads/
 
 ## Layout For the Jellyfin TV Output Profile
 
-With `libraryOutputProfile` set to `jellyfinTv`, new video downloads are published as `Channel [channel-id]/Season <year>/Channel - S<year>E<nnn> - Title [video-id].<ext>` with `tvshow.nfo`, `season.nfo` and per-episode sidecars sharing the media stem. Subfolder settings still apply (`__subfolder/Channel [channel-id]/...`). See [Jellyfin TV (Shows) Output](media-servers/jellyfin.md#jellyfin-tv-shows-output).
+With `libraryOutputProfile` set to `jellyfinTv`, new video downloads are published as `Channel [channel-id]/Season <year>/Channel - S<year>E<nnn> - Title [video-id].<ext>` with `tvshow.nfo`, `season.nfo` and per-episode sidecars sharing the media stem. Subfolder settings still apply (`__subfolder/Channel [channel-id]/...`). See [Jellyfin TV (Shows) Output](media-servers/jellyfin.md#jellyfin-tv-shows-output). Existing downloads stay in their layout until you move them with Settings -> Maintenance -> Move existing downloads into the TV library; see [Migrating Existing Downloads to the TV Layout](media-servers/jellyfin.md#migrating-existing-downloads-to-the-tv-layout).
 
 ## The `__playlists__` Folder
 

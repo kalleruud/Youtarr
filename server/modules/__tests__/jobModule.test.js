@@ -29,6 +29,13 @@ jest.mock('../storageGuard', () => ({
   refresh: jest.fn().mockResolvedValue({ paused: false }),
   on: jest.fn()
 }));
+jest.mock('../maintenanceLease', () => ({
+  trackMethods: (instance) => instance,
+  isActive: jest.fn(() => false),
+  current: jest.fn(() => ({ reason: 'TV library migration is moving files' })),
+  describe: jest.fn(() => 'A library maintenance task is running: TV library migration is moving files'),
+  on: jest.fn()
+}));
 
 const { v4: uuidv4 } = require('uuid');
 
@@ -1063,6 +1070,29 @@ describe('JobModule', () => {
       await JobModule.startNextJob();
 
       expect(mockAction).not.toHaveBeenCalled();
+    });
+
+    test('holds pending jobs while a library migration holds the maintenance lease', async () => {
+      const maintenanceLease = require('../maintenanceLease');
+      maintenanceLease.isActive.mockReturnValueOnce(true);
+      const mockAction = jest.fn();
+      JobModule.jobs = { 'job-1': { status: 'Pending', action: mockAction } };
+
+      await JobModule.startNextJob();
+
+      expect(mockAction).not.toHaveBeenCalled();
+    });
+
+    test('starts held jobs when the maintenance lease is released', async () => {
+      const maintenanceLease = require('../maintenanceLease');
+      const onReleased = maintenanceLease.on.mock.calls.find(([event]) => event === 'released')[1];
+      const mockAction = jest.fn();
+      JobModule.jobs = { 'job-1': { status: 'Pending', action: mockAction } };
+
+      onReleased();
+      await JobModule.nextJobStart;
+
+      expect(mockAction).toHaveBeenCalled();
     });
 
     test('starts pending jobs when the pause check fails', async () => {
@@ -2409,6 +2439,14 @@ describe('JobModule', () => {
         plexApiKey: 'test-key',
       }));
       JobModule = require('../jobModule');
+    });
+
+    test('skips while a library migration holds the maintenance lease', async () => {
+      require('../maintenanceLease').isActive.mockReturnValueOnce(true);
+
+      await expect(JobModule.backfillFromCompleteList()).resolves.toEqual({
+        status: 'skipped', outcome: 'skipped', message: 'A library maintenance task is running: TV library migration is moving files.'
+      });
     });
 
     test('should skip when complete.list does not exist', async () => {
