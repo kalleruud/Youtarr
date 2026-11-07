@@ -51,6 +51,28 @@ class LibraryRefresh {
     return this.videos.has(youtubeId) || this.videos.size < MAX_PENDING_VIDEOS;
   }
 
+  // Reserve synchronously before the asynchronous revision claim. Automatic
+  // admission coalesces onto this slot until the claimed worker completes.
+  async enqueueRetry(youtubeId, claim) {
+    if (this.videos.has(youtubeId) || !this.canAccept(youtubeId)) return null;
+    let resolve;
+    const promise = new Promise((done) => { resolve = done; });
+    this.videos.set(youtubeId, { promise, resolve });
+    let started = false;
+    try {
+      const outcome = await claim();
+      if (!outcome) return { outcome: null };
+      this._startBatch([youtubeId], outcome);
+      started = true;
+      return { outcome, completion: promise };
+    } finally {
+      if (!started) {
+        this.videos.delete(youtubeId);
+        resolve();
+      }
+    }
+  }
+
   enqueue(youtubeIds) {
     const waits = [];
     const admitted = [];
@@ -72,18 +94,35 @@ class LibraryRefresh {
       logger.warn({ limit: MAX_PENDING_VIDEOS }, 'Library refresh admission coalesced or full; pending videos can be retried from Acquisition Health');
     }
     if (admitted.length) {
-      this._runBatch(admitted).catch((err) => {
-        logger.error({ err }, 'Library refresh batch failed');
-      }).finally(() => {
-        for (const id of admitted) {
-          this.videos.get(id).resolve();
-          this.videos.delete(id);
-        }
-      });
+      this._startBatch(admitted);
     }
     const completion = Promise.all(waits).then(() => undefined);
     completion.accepted = !refused;
     return completion;
+  }
+
+  _startBatch(admitted, claimed = null) {
+    this._runBatch(admitted).then(async () => {
+      // A missing/replaced outcome or unusable publication details can leave
+      // no runnable item. Release only our still-unsettled claim.
+      if (claimed) {
+        await this._record(claimed, STATUSES.PENDING, CATEGORIES.SCAN_PENDING,
+          'refresh-deferred', 'Targeted refresh finished without confirmation; retry the library step later.', true);
+      }
+    }).catch(async (err) => {
+      logger.error({ err }, 'Library refresh batch failed');
+      if (claimed) {
+        await this._record(claimed, STATUSES.PENDING, CATEGORIES.SCAN_PENDING,
+          'refresh-deferred', 'Targeted refresh could not complete; retry the library step later.', true);
+      }
+    }).catch((err) => {
+      logger.error({ err }, 'Library refresh failure could not be recorded');
+    }).finally(() => {
+      for (const id of admitted) {
+        this.videos.get(id).resolve();
+        this.videos.delete(id);
+      }
+    });
   }
 
   async _runBatch(youtubeIds) {

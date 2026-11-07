@@ -183,27 +183,19 @@ class HealthModule {
 
     if (stage === STAGES.ACQUISITION) await this._assertAcquisitionRetryAllowed(youtubeId);
 
-    if (stage === STAGES.LIBRARY && !libraryRefresh.canAccept(youtubeId)) {
-      throw new HealthError(503, 'refresh-capacity', 'Targeted refresh capacity is full; retry the library step later.');
+    const claim = () => outcomeStore.claimRetry({ youtubeId, stage, expectedRevision: revision });
+    const admission = stage === STAGES.LIBRARY
+      ? await libraryRefresh.enqueueRetry(youtubeId, claim) : null;
+    if (stage === STAGES.LIBRARY && !admission) {
+      throw new HealthError(503, 'refresh-capacity', 'Targeted refresh is active for this video or capacity is full; retry the library step later.');
     }
-    const claimed = await outcomeStore.claimRetry({ youtubeId, stage, expectedRevision: revision });
+    const claimed = admission ? admission.outcome : await claim();
     if (!claimed) {
       throw new HealthError(409, 'stale-or-duplicate',
         'This step changed since you loaded it, is not retryable, or a retry was already requested. Refresh to see its current state.');
     }
 
     if (stage === STAGES.LIBRARY) {
-      const completion = libraryRefresh.enqueue([youtubeId]);
-      if (completion.accepted === false) {
-        await outcomeStore.record({
-          youtubeId, stage, expectedRevision: claimed.revision,
-          status: STATUSES.PENDING, category: CATEGORIES.SCAN_PENDING,
-          reasonCode: 'refresh-deferred', retryable: true, details: claimed.details,
-          message: 'Targeted refresh capacity is full; retry the library step later.',
-        });
-        throw new HealthError(503, 'refresh-capacity', 'Targeted refresh capacity is full; retry the library step later.');
-      }
-      completion.catch(() => {});
       return { outcome: claimed, queued: true };
     }
 

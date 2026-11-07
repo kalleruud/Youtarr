@@ -265,3 +265,9 @@ Organize content by type:
 ## File Structure
 
 See [docs/YOUTARR_DOWNLOADS_FOLDER_STRUCTURE.md](../YOUTARR_DOWNLOADS_FOLDER_STRUCTURE.md)
+
+Acquisition Health library retries reserve bounded worker capacity before claiming
+an outcome revision. A check already active for the video refuses a new retry
+without changing its revision; automatic admission during a retry claim waits for
+that worker. Capacity and stale-claim failures release the reservation. Recovery
+of library checks after a server restart still requires an explicit retry.
