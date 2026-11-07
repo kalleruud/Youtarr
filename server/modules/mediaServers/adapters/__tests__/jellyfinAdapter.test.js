@@ -572,3 +572,72 @@ describe('JellyfinAdapter', () => {
     });
   });
 });
+
+describe('JellyfinAdapter watch-state page totals', () => {
+  const cfg = { jellyfinUrl: 'http://jf:8096', jellyfinApiKey: 'KEY', jellyfinUserId: 'USR' };
+  const item = (id) => ({ Id: id, Path: `/m/${id} [${id.padEnd(11, 'x')}].mp4`, UserData: { Played: true } });
+
+  // Watched listing pages from `watched(startIndex)`, in-progress from `resumable(startIndex)`.
+  const serve = ({ watched, resumable = () => ({ TotalRecordCount: 0, Items: [] }), users = [{ Id: 'u1', Name: 'One' }] }) => {
+    axios.get.mockImplementation(async (url, { params }) => {
+      if (url.endsWith('/Users')) return { data: users };
+      return { data: params.isPlayed ? watched(params.startIndex) : resumable(params.startIndex) };
+    });
+  };
+
+  beforeEach(() => axios.get.mockReset());
+
+  test('routine sync does not report a user complete when a short page ends below TotalRecordCount', async () => {
+    serve({ watched: () => ({ TotalRecordCount: 2, Items: [item('a')] }) });
+    const { entries, completeUserIds } = await new JellyfinAdapter(cfg).fetchWatchStates();
+    expect({ entries: entries.length, completeUserIds }).toEqual({ entries: 1, completeUserIds: [] });
+  });
+
+  test('routine sync still reports a user complete when the total matches', async () => {
+    serve({ watched: () => ({ TotalRecordCount: 1, Items: [item('a')] }) });
+    const { completeUserIds } = await new JellyfinAdapter(cfg).fetchWatchStates();
+    expect(completeUserIds).toEqual(['u1']);
+  });
+
+  test('strict mode refuses a short page below TotalRecordCount', async () => {
+    serve({ watched: (start) => ({ TotalRecordCount: 2, Items: start === 0 ? [item('a')] : [] }) });
+    await expect(new JellyfinAdapter(cfg).fetchWatchStates({ strict: true })).rejects.toThrow('inconsistent pagination');
+  });
+
+  test('strict mode refuses a listing without TotalRecordCount', async () => {
+    serve({ watched: () => ({ Items: [item('a')] }) });
+    await expect(new JellyfinAdapter(cfg).fetchWatchStates({ strict: true })).rejects.toThrow('missing count or items');
+  });
+
+  test('strict mode refuses a malformed page', async () => {
+    serve({ watched: () => ({ TotalRecordCount: 1, Items: null }) });
+    await expect(new JellyfinAdapter(cfg).fetchWatchStates({ strict: true })).rejects.toThrow('missing count or items');
+  });
+
+  test('strict mode refuses a repeated page', async () => {
+    serve({ watched: () => ({ TotalRecordCount: 2, Items: [item('a')] }) });
+    await expect(new JellyfinAdapter(cfg).fetchWatchStates({ strict: true })).rejects.toThrow('repeated page or item');
+  });
+
+  test('strict mode refuses a total that changes between pages', async () => {
+    serve({ watched: (start) => (start === 0 ? { TotalRecordCount: 3, Items: [item('a')] } : { TotalRecordCount: 2, Items: [item('b')] }) });
+    await expect(new JellyfinAdapter(cfg).fetchWatchStates({ strict: true })).rejects.toThrow('total changed between pages');
+  });
+
+  test('strict mode refuses a malformed user listing', async () => {
+    serve({ users: { Items: [] }, watched: () => ({ TotalRecordCount: 0, Items: [] }) });
+    await expect(new JellyfinAdapter(cfg).fetchWatchStates({ strict: true })).rejects.toThrow('malformed user listing');
+  });
+
+  test('strict mode reads pages a server caps below the limit, from where the last one ended', async () => {
+    serve({ watched: (start) => ({ TotalRecordCount: 2, Items: [item(start === 0 ? 'a' : 'b')] }) });
+    const { entries, completeUserIds } = await new JellyfinAdapter(cfg).fetchWatchStates({ strict: true });
+    expect({ entries: entries.length, completeUserIds }).toEqual({ entries: 2, completeUserIds: ['u1'] });
+  });
+
+  test('strict mode accepts empty listings that report zero', async () => {
+    serve({ watched: () => ({ TotalRecordCount: 0, Items: [] }) });
+    const { completeUserIds } = await new JellyfinAdapter(cfg).fetchWatchStates({ strict: true });
+    expect(completeUserIds).toEqual(['u1']);
+  });
+});

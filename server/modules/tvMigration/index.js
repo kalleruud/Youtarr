@@ -98,6 +98,8 @@ class TvMigration {
         !channelIds.every((id) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id)))) {
       throw new TvMigrationError('invalid-scope', 'channelIds must be a list of YouTube channel ids');
     }
+    // A preview made while files are moving would describe a half-moved library.
+    if (this.running && this.running.mode !== 'restore') this._assertIdle();
     if (this.lease.isActive()) {
       throw new TvMigrationError('maintenance-active', this.lease.describe());
     }
@@ -154,14 +156,65 @@ class TvMigration {
     if (this.running) throw new TvMigrationError('running', `Migration ${this.running.planId} is already ${this.running.mode === 'rollback' ? 'rolling back' : 'running'}`);
   }
 
+  // Claims the single run slot synchronously, before the caller's first
+  // await, so a concurrent apply/resume/rollback/restore is refused instead
+  // of racing through validation and the snapshot. The slot stays held
+  // through startup and the background run; only its own reservation can
+  // free it (_endReservation), so a refused or failed request never touches
+  // another request's run or lease.
+  _reserve(planId, mode) {
+    this._assertIdle();
+    let settle;
+    const reservation = { planId, mode, promise: new Promise((resolve) => { settle = resolve; }) };
+    reservation.settle = settle;
+    this.running = reservation;
+    return reservation;
+  }
+
+  _endReservation(reservation) {
+    if (this.running === reservation) this.running = null;
+    reservation.settle();
+  }
+
+  // Runs a request's startup under its reservation: a startup error frees the
+  // reservation (and only it), success leaves it to the background run.
+  async _exclusive(planId, mode, startup) {
+    const reservation = this._reserve(planId, mode);
+    try {
+      return await startup(reservation);
+    } catch (err) {
+      // Once the background run started it owns the reservation.
+      if (!reservation.started) this._endReservation(reservation);
+      throw err;
+    }
+  }
+
+  // Take the plan's lease. Returns whether this call took it (false when this
+  // plan already held it, e.g. an interrupted migration), so error cleanup
+  // releases only a lease the call itself acquired.
+  _acquireLease(planId, reason) {
+    const owner = leaseOwner(planId);
+    const alreadyHeld = this.lease.current()?.owner === owner;
+    try {
+      this.lease.acquire(owner, reason);
+    } catch (err) {
+      if (this.lease.isMaintenanceError(err)) throw new TvMigrationError('maintenance-active', err.message);
+      throw err;
+    }
+    return !alreadyHeld;
+  }
+
   /**
    * Start moving files. Refused unless the plan is fresh, confirmed, free of
    * blockers, and the library profile is Jellyfin TV.
    * @param {string} planId
    * @param {{confirm?: boolean, acceptUserStateLoss?: boolean}} options
    */
-  async apply(planId, { confirm = false, acceptUserStateLoss = false } = {}) {
-    this._assertIdle();
+  apply(planId, options) {
+    return this._exclusive(planId, 'apply', (reservation) => this._startApply(planId, options || {}, reservation));
+  }
+
+  async _startApply(planId, { confirm = false, acceptUserStateLoss = false }, reservation) {
     const { plan, state } = await this._load(planId);
     if (state.status !== STATUS.PLANNED) throw new TvMigrationError('invalid-state', `The plan is ${state.status}; only a new plan can be applied`);
     if (confirm !== true) throw new TvMigrationError('confirmation-required', 'Applying moves files; send confirm: true');
@@ -177,13 +230,7 @@ class TvMigration {
       throw new TvMigrationError('downloads-active', 'A download is running. Apply the migration once it finishes.');
     }
 
-    const owner = leaseOwner(planId);
-    try {
-      this.lease.acquire(owner, `TV library migration ${planId} is moving files`);
-    } catch (err) {
-      if (this.lease.isMaintenanceError(err)) throw new TvMigrationError('maintenance-active', err.message);
-      throw err;
-    }
+    const acquired = this._acquireLease(planId, `TV library migration ${planId} is moving files`);
     try {
       const libraryCheck = await checkLibraryRoot(plan.baseDir);
       if (await libraryCheckCoversRows(libraryCheck, Video, { removed: false })) {
@@ -198,15 +245,14 @@ class TvMigration {
         throw new TvMigrationError('stale', `${stale.length} video(s) changed since the plan was made; make a new plan`, { stale });
       }
       await this._snapshotUserState(plan, state, acceptUserStateLoss);
+      state.status = STATUS.APPLYING;
+      state.startedAt = new Date().toISOString();
+      await this.store.saveState(planId, state);
     } catch (err) {
-      this.lease.release(owner);
+      if (acquired) this.lease.release(leaseOwner(planId));
       throw err;
     }
-
-    state.status = STATUS.APPLYING;
-    state.startedAt = new Date().toISOString();
-    await this.store.saveState(planId, state);
-    this._start(planId, 'apply');
+    this._start(reservation);
     return this.get(planId);
   }
 
@@ -227,58 +273,76 @@ class TvMigration {
     }
   }
 
-  async resume(planId) {
-    this._assertIdle();
+  resume(planId) {
+    return this._exclusive(planId, 'apply', (reservation) => this._startResume(planId, reservation));
+  }
+
+  async _startResume(planId, reservation) {
     const { state } = await this._load(planId);
     if (state.status !== STATUS.INTERRUPTED || state.interruptedFrom === STATUS.ROLLING_BACK) {
       throw new TvMigrationError('invalid-state', state.interruptedFrom === STATUS.ROLLING_BACK
         ? 'This migration was interrupted while rolling back; roll it back again'
         : `The plan is ${state.status}; only an interrupted migration can be resumed`);
     }
-    this.lease.acquire(leaseOwner(planId), `TV library migration ${planId} is moving files`);
-    state.status = STATUS.APPLYING;
-    state.error = null;
-    await this.store.saveState(planId, state);
-    this._start(planId, 'apply');
+    const acquired = this._acquireLease(planId, `TV library migration ${planId} is moving files`);
+    try {
+      state.status = STATUS.APPLYING;
+      state.error = null;
+      await this.store.saveState(planId, state);
+    } catch (err) {
+      if (acquired) this.lease.release(leaseOwner(planId));
+      throw err;
+    }
+    this._start(reservation);
     return this.get(planId);
   }
 
-  async rollback(planId, { confirm = false } = {}) {
-    this._assertIdle();
+  rollback(planId, options) {
+    return this._exclusive(planId, 'rollback', (reservation) => this._startRollback(planId, options || {}, reservation));
+  }
+
+  async _startRollback(planId, { confirm = false }, reservation) {
     const { state } = await this._load(planId);
     if (![STATUS.INTERRUPTED, STATUS.APPLIED].includes(state.status)) {
       throw new TvMigrationError('invalid-state', `The plan is ${state.status}; only an applied or interrupted migration can be rolled back`);
     }
     if (confirm !== true) throw new TvMigrationError('confirmation-required', 'Rolling back moves files; send confirm: true');
+    const acquired = this._acquireLease(planId, `TV library migration ${planId} is rolling back`);
     try {
-      this.lease.acquire(leaseOwner(planId), `TV library migration ${planId} is rolling back`);
+      state.status = STATUS.ROLLING_BACK;
+      state.error = null;
+      await this.store.saveState(planId, state);
     } catch (err) {
-      if (this.lease.isMaintenanceError(err)) throw new TvMigrationError('maintenance-active', err.message);
+      if (acquired) this.lease.release(leaseOwner(planId));
       throw err;
     }
-    state.status = STATUS.ROLLING_BACK;
-    state.error = null;
-    await this.store.saveState(planId, state);
-    this._start(planId, 'rollback');
+    this._start(reservation);
     return this.get(planId);
   }
 
-  async restoreUserState(planId) {
-    this._assertIdle();
+  restoreUserState(planId) {
+    return this._exclusive(planId, 'restore', (reservation) => this._startRestore(planId, reservation));
+  }
+
+  async _startRestore(planId, reservation) {
     const { plan, state } = await this._load(planId);
     if (state.status !== STATUS.APPLIED) throw new TvMigrationError('invalid-state', 'Only an applied migration can restore user state');
     const snapshot = await this.store.loadUserState(planId);
     if (!snapshot) throw new TvMigrationError('no-snapshot', 'This migration has no Jellyfin user state to restore');
     state.restore = { ...(state.restore || {}), status: 'running', startedAt: new Date().toISOString() };
     await this.store.saveState(planId, state);
-    this._start(planId, 'restore', { plan, snapshot });
+    this._start(reservation, { plan, snapshot });
     return this.get(planId);
   }
 
-  // Runs one background job; the caller already validated and persisted the
-  // starting state. Never rejects.
-  _start(planId, mode, extra = {}) {
-    const run = (async () => {
+  // Runs one background job under the caller's reservation; the caller
+  // already validated and persisted the starting state. Never rejects. The
+  // reservation is freed when the run ends, so get() and list() keep
+  // reporting it as running until then.
+  _start(reservation, extra = {}) {
+    const { planId, mode } = reservation;
+    reservation.started = true;
+    (async () => {
       try {
         if (mode === 'apply') await this._runApply(planId);
         else if (mode === 'rollback') await this._runRollback(planId);
@@ -286,15 +350,14 @@ class TvMigration {
       } catch (err) {
         logger.error({ err, planId, mode }, 'TV library migration run failed');
       } finally {
-        this.running = null;
+        this._endReservation(reservation);
       }
     })();
-    this.running = { planId, mode, promise: run };
   }
 
-  /** Resolves when the current background run (if any) ends. For tests and shutdown. */
+  /** Resolves when the current request or background run (if any) ends, startup included. For tests and shutdown. */
   async waitForIdle() {
-    if (this.running) await this.running.promise;
+    while (this.running) await this.running.promise;
   }
 
   async _runApply(planId) {

@@ -296,12 +296,130 @@ describe('Jellyfin user state', () => {
   test('saves the watch state of planned videos before moving them', async () => {
     axios.get.mockImplementation(async (url, { params }) => {
       if (url.endsWith('/Users')) return { data: [{ Id: 'u1', Name: 'One' }] };
-      if (params.isPlayed) return { data: { Items: [{ Id: 'old', Path: `/media/Show/Show - Flat [${FLAT}].mp4`, UserData: { Played: true, PlayCount: 1 } }] } };
+      if (params.isPlayed) return { data: { TotalRecordCount: 1, Items: [{ Id: 'old', Path: `/media/Show/Show - Flat [${FLAT}].mp4`, UserData: { Played: true, PlayCount: 1 } }] } };
       return { data: { TotalRecordCount: 0, Items: [] } };
     });
     const plan = await migration.createPlan();
     const result = await applyAndWait(plan.planId);
     expect(result.userState.counts).toEqual({ videosWithState: 1, userEntries: 1, playlists: 0 });
+  });
+
+  test('refuses to apply when Jellyfin lists fewer watched items than it reports, moving nothing', async () => {
+    axios.get.mockImplementation(async (url, { params }) => {
+      if (url.endsWith('/Users')) return { data: [{ Id: 'u1', Name: 'One' }] };
+      if (params.isPlayed) {
+        return { data: { TotalRecordCount: 2, Items: params.startIndex === 0 ? [{ Id: 'old', Path: `/media/Show/Show - Flat [${FLAT}].mp4`, UserData: { Played: true } }] : [] } };
+      }
+      return { data: { TotalRecordCount: 0, Items: [] } };
+    });
+    const plan = await migration.createPlan();
+    const before = await tree(library);
+    await expect(migration.apply(plan.planId, { confirm: true })).rejects.toMatchObject({ code: 'snapshot-failed' });
+    expect([await tree(library), lease.current(), (await migration.get(plan.planId)).status]).toEqual([before, null, 'planned']);
+  });
+});
+
+describe('concurrent requests', () => {
+  // Holds the Jellyfin /Users request of the first snapshot until released.
+  function suspendFirstSnapshot() {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    let calls = 0;
+    axios.get.mockImplementation(async (url) => {
+      if (url.endsWith('/Users')) {
+        calls += 1;
+        if (calls === 1) await gate;
+        else throw new Error('ECONNREFUSED');
+        return { data: [{ Id: 'u1', Name: 'One' }] };
+      }
+      return { data: { TotalRecordCount: 0, Items: [] } };
+    });
+    return () => release();
+  }
+
+  beforeEach(() => {
+    Object.assign(mockConfig, { jellyfinEnabled: true, jellyfinUrl: 'http://jf', jellyfinApiKey: 'k', jellyfinUserId: 'u1' });
+  });
+
+  afterEach(() => {
+    ['jellyfinEnabled', 'jellyfinUrl', 'jellyfinApiKey', 'jellyfinUserId'].forEach((key) => delete mockConfig[key]);
+  });
+
+  test('a second apply of the same plan is refused while the first is still starting', async () => {
+    const plan = await migration.createPlan();
+    const resume = suspendFirstSnapshot();
+    const first = migration.apply(plan.planId, { confirm: true });
+    await expect(migration.apply(plan.planId, { confirm: true })).rejects.toMatchObject({ code: 'running' });
+    resume();
+    await first;
+    await migration.waitForIdle();
+    expect((await migration.get(plan.planId)).status).toBe('applied');
+  });
+
+  test('a refused second apply cannot release the first apply\'s lease', async () => {
+    const plan = await migration.createPlan();
+    const resume = suspendFirstSnapshot();
+    const first = migration.apply(plan.planId, { confirm: true });
+    await expect(migration.apply(plan.planId, { confirm: true })).rejects.toMatchObject({ code: 'running' });
+    // The first holds the lease while its snapshot is pending.
+    await waitForLease();
+    const leaseWhilePending = lease.current()?.owner;
+    resume();
+    await first;
+    await migration.waitForIdle();
+    expect([leaseWhilePending, (await migration.get(plan.planId)).status, lease.isActive()])
+      .toEqual([`tv-migration:${plan.planId}`, 'applied', false]);
+  });
+
+  async function waitForLease() {
+    for (let i = 0; i < 100 && !lease.isActive(); i += 1) await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  test.each([
+    ['resume', (id) => migration.resume(id)],
+    ['rollback', (id) => migration.rollback(id, { confirm: true })],
+    ['restoreUserState', (id) => migration.restoreUserState(id)],
+    ['createPlan', () => migration.createPlan()],
+  ])('%s is refused while an apply is starting', async (_name, request) => {
+    const plan = await migration.createPlan();
+    const resume = suspendFirstSnapshot();
+    const first = migration.apply(plan.planId, { confirm: true });
+    await expect(request(plan.planId)).rejects.toMatchObject({ code: 'running' });
+    resume();
+    await first;
+    await migration.waitForIdle();
+    expect([(await migration.get(plan.planId)).status, lease.isActive()]).toEqual(['applied', false]);
+  });
+
+  test('a second apply is refused while the first one runs in the background', async () => {
+    const plan = await migration.createPlan();
+    axios.get.mockImplementation(async (url) => ({ data: url.endsWith('/Users') ? [{ Id: 'u1' }] : { TotalRecordCount: 0, Items: [] } }));
+    await migration.apply(plan.planId, { confirm: true });
+    await expect(migration.apply(plan.planId, { confirm: true })).rejects.toMatchObject({ code: 'running' });
+    await migration.waitForIdle();
+    expect(lease.isActive()).toBe(false);
+  });
+
+  test('a failed start frees its own reservation and lease, so a retry applies', async () => {
+    const plan = await migration.createPlan();
+    axios.get.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    await expect(migration.apply(plan.planId, { confirm: true })).rejects.toMatchObject({ code: 'snapshot-failed' });
+    expect([lease.current(), (await migration.list()).running]).toEqual([null, null]);
+    axios.get.mockImplementation(async (url) => ({ data: url.endsWith('/Users') ? [{ Id: 'u1' }] : { TotalRecordCount: 0, Items: [] } }));
+    await migration.apply(plan.planId, { confirm: true });
+    await migration.waitForIdle();
+    expect([(await migration.get(plan.planId)).status, lease.isActive()]).toEqual(['applied', false]);
+  });
+
+  test('waitForIdle waits for a request that is still starting', async () => {
+    const plan = await migration.createPlan();
+    const resume = suspendFirstSnapshot();
+    const first = migration.apply(plan.planId, { confirm: true });
+    const idle = migration.waitForIdle();
+    resume();
+    await idle;
+    await first;
+    expect([(await migration.get(plan.planId)).status, lease.isActive()]).toEqual(['applied', false]);
   });
 });
 

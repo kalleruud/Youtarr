@@ -63,7 +63,7 @@ function adapterFor(config) {
 async function snapshot(plan, config, { adapter = adapterFor(config) } = {}) {
   if (!adapter) return null;
   const ids = new Set(plan.items.map((item) => item.youtubeId));
-  const { entries, users, completeUserIds } = await adapter.fetchWatchStates();
+  const { entries, users, completeUserIds } = await adapter.fetchWatchStates({ strict: true });
   const expectedUserIds = (users || []).map((user) => user.id);
   const missingUserIds = expectedUserIds.filter((id) => !completeUserIds?.includes(id));
   if (!expectedUserIds.length || missingUserIds.length) {
