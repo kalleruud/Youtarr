@@ -47,7 +47,7 @@ async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance,
     const originalBytes = await fs.readFile(subtitlePath);
     const original = new TextDecoder('utf-8', { fatal: true }).decode(originalBytes);
     const result = normalizeCaptionTrack({ rawTrack: source ?? original, format: 'srt', provenance, timingMap: timeline === 'source' ? timingMap : undefined });
-    if (!result.diagnostics.transitionsRemoved && timeline === 'final') return { status: 'unchanged', diagnostics: result.diagnostics };
+    if (!result.diagnostics.transitionsRemoved && timeline === 'final') return { status: 'unchanged', diagnostics: result.diagnostics, normalizerVersion: result.normalizerVersion };
     const serialized = serializeSrt(result.cues);
     normalizeCaptionTrack({ rawTrack: serialized, format: 'srt', provenance: 'unknown' });
     const realMedia = await fs.realpath(mediaRoot);
@@ -74,7 +74,7 @@ async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance,
     await fs.rename(temporaryPath, subtitlePath);
     temporaryPath = null;
     logger.info({ youtubeId, subtitlePath, backupPath }, '[Post-Process] Published normalized caption; original retained');
-    return { status: 'published', backupPath, diagnostics: result.diagnostics };
+    return { status: 'published', backupPath, diagnostics: result.diagnostics, normalizerVersion: result.normalizerVersion };
   } catch (err) {
     return { status: 'warning', reason: 'caption normalization or publication failed', error: err };
   } finally {
@@ -82,4 +82,4 @@ async function publishCaption({ subtitlePath, backupRoot, mediaRoot, provenance,
   }
 }
 
-module.exports = { publishCaption };
+module.exports = { publishCaption, retainCaption, serializeSrt, isWithin };

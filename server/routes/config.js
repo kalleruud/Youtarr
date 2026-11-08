@@ -5,6 +5,8 @@ const customArgsParser = require('../modules/download/customArgsParser');
 const filenamePreview = require('../modules/filenamePreview');
 const { getExternalCookiesPath } = require('../modules/externalCookies');
 const { isValidLevelSetting } = require('../logging/logLevel');
+const { parseRetrySchedule } = require('../modules/captions/enrichmentSchedule');
+const { SOURCE_POLICIES } = require('../modules/captions/captionTrackSelection');
 
 // Summarize the allowlist check of a saved custom-args string for the client,
 // without the resolved args (which may carry secret values). Returns null when
@@ -341,6 +343,29 @@ module.exports = function createConfigRoutes({
       !isValidLevelSetting(updateData.logLevel)
     ) {
       return res.status(400).json({ error: 'Log level must be Default, Warn, Info or Debug' });
+    }
+
+    // Caption preferences (issue #5). Only a changed value is rejected, so a
+    // hand-edited setting never blocks unrelated Settings saves; at runtime an
+    // unusable schedule falls back to the default.
+    const captionChanged = (key) => Object.prototype.hasOwnProperty.call(updateData, key) &&
+      updateData[key] !== currentConfig[key];
+    if (captionChanged('captionSourcePolicy') && !SOURCE_POLICIES.includes(updateData.captionSourcePolicy)) {
+      return res.status(400).json({ error: `Caption source must be one of: ${SOURCE_POLICIES.join(', ')}` });
+    }
+    if (captionChanged('captionEnrichmentRetrySchedule')) {
+      const { error } = parseRetrySchedule(updateData.captionEnrichmentRetrySchedule);
+      if (error) return res.status(400).json({ error: `Caption check schedule: ${error}` });
+    }
+    if (captionChanged('captionEnrichmentMinIntervalSeconds')) {
+      const seconds = updateData.captionEnrichmentMinIntervalSeconds;
+      if (!Number.isInteger(seconds) || seconds < 10 || seconds > 3600) {
+        return res.status(400).json({ error: 'Caption check spacing must be a whole number of seconds from 10 to 3600' });
+      }
+    }
+    if (captionChanged('captionPreferredVariants') &&
+        (typeof updateData.captionPreferredVariants !== 'string' || updateData.captionPreferredVariants.length > 200)) {
+      return res.status(400).json({ error: 'Preferred caption variants must be a comma-separated list of language codes' });
     }
 
     // Video filename template prefix validation

@@ -12,6 +12,10 @@ const BARE_LANGUAGE_CODE = /^[a-z]{2,3}$/i;
 // A language code with optional subtags ("en", "en-orig", "pt-BR", "zh-Hans"),
 // as opposed to a yt-dlp alias, exclusion ("-live_chat") or regex ("en.*").
 const PLAIN_LANGUAGE_CODE = /^[a-z]{2,3}(-[a-z0-9]+)*$/i;
+// Bare codes YouTube uses interchangeably for one written language. Norwegian
+// tracks appear as both "no" (macrolanguage) and "nb" (Bokmal); Nynorsk ("nn")
+// is a distinct written standard and must be selected on its own.
+const LANGUAGE_ALIASES = Object.freeze({ no: ['nb'], nb: ['no'] });
 
 /**
  * Split the configured comma-separated list into trimmed entries.
@@ -49,8 +53,19 @@ function isPlainLanguageCode(entry) {
   return entry !== YTDLP_ALL_SUBTITLES_ALIAS && PLAIN_LANGUAGE_CODE.test(entry);
 }
 
+/**
+ * The bare codes a configured bare code stands for, itself first.
+ * @param {string} entry - A bare language code ("no", "en")
+ * @returns {string[]}
+ */
+function languageFamily(entry) {
+  const code = String(entry);
+  return [code, ...(LANGUAGE_ALIASES[code.toLowerCase()] || [])];
+}
+
 module.exports = {
   DEFAULT_SUBTITLE_LANGUAGE,
+  languageFamily,
   parseSubtitleLanguages,
   isExpandableLanguageCode,
   isPlainLanguageCode,

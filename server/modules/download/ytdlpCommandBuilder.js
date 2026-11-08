@@ -13,7 +13,7 @@ const {
   composeVideoFolderName,
 } = require('../filesystem/constants');
 
-const { parseSubtitleLanguages, isExpandableLanguageCode } = require('./subtitleLanguages');
+const { parseSubtitleLanguages, isExpandableLanguageCode, isPlainLanguageCode, languageFamily } = require('./subtitleLanguages');
 
 // yt-dlp matches each --sub-langs entry as a case-insensitive full regex, so a
 // bare code never matches YouTube's regional or script tracks (en-GB, zh-Hans,
@@ -459,9 +459,12 @@ class YtdlpCommandBuilder {
    * @returns {string} - Comma-separated yt-dlp language selectors
    */
   static buildSubtitleLanguageSelector(subtitleLanguage) {
-    return parseSubtitleLanguages(subtitleLanguage)
-      .map((code) => (isExpandableLanguageCode(code) ? `${code}${LANGUAGE_VARIANT_SUFFIX}` : code))
-      .join(',');
+    const selectors = parseSubtitleLanguages(subtitleLanguage).flatMap((code) => (
+      isExpandableLanguageCode(code)
+        ? languageFamily(code).map((member) => `${member}${LANGUAGE_VARIANT_SUFFIX}`)
+        : [code]
+    ));
+    return [...new Set(selectors)].join(',');
   }
 
   // The snapshot is emitted by yt-dlp at after_move, before its Exec PP.
@@ -484,6 +487,42 @@ class YtdlpCommandBuilder {
       '--print-to-file', 'after_move:%(.{id,filepath,requested_subtitles,__real_download,sponsorblock_chapters,duration})j', `${outputPath}.caption-state-${nonce}.json`,
       '--exec', `after_move:node ${path.resolve(__dirname, '../videoDownloadPostProcessFiles.js')} {} ${contract} ${nonce}`,
     ];
+  }
+
+  /**
+   * A delayed caption check: metadata plus the requested caption tracks, no
+   * media, no download archive and no custom args, written to a private
+   * folder outside the library. Languages are plain codes, selected the same
+   * way as for downloads (bare codes include their variants).
+   * @param {Object} config
+   * @param {string} youtubeId - validated 11-character video id
+   * @param {string[]} languages - plain language codes to fetch
+   * @param {string} outputDir - private folder for this attempt
+   * @returns {string[]}
+   */
+  static buildCaptionEnrichmentArgs(config, youtubeId, languages, outputDir) {
+    if (!/^[A-Za-z0-9_-]{11}$/.test(youtubeId || '')) throw new Error('Invalid YouTube video id');
+    const safeLanguages = (languages || []).filter((code) => isPlainLanguageCode(code));
+    if (!safeLanguages.length) throw new Error('No caption languages to fetch');
+    const args = [...this.buildCommonArgs(config, { skipSleepRequests: true })];
+    args.push(
+      '--skip-download',
+      '--no-playlist',
+      '--write-info-json',
+      '--no-write-playlist-metafiles',
+      '--no-write-comments',
+      '--write-sub',
+      '--write-auto-sub',
+    );
+    args.push(
+      '--sub-langs', this.buildSubtitleLanguageSelector(safeLanguages.join(',')),
+      '--convert-subs', 'srt',
+      '--sleep-subtitles', '5',
+      '--output', path.join(outputDir, '%(id)s.%(ext)s'),
+      '--',
+      `https://www.youtube.com/watch?v=${youtubeId}`,
+    );
+    return args;
   }
 
   // Build subtitle args based on configuration

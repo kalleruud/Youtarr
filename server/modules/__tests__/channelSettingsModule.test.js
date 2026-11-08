@@ -1219,6 +1219,22 @@ describe('ChannelSettingsModule', () => {
       Video.findAll.mockResolvedValue([]);
     });
 
+    test('folder relocation waits for caption publication', async () => {
+      const lease = require('../download/videoPublicationLease');
+      Video.findAll.mockResolvedValue([{ youtubeId: 'abcdefghijk' }]);
+      fs.existsSync.mockReturnValueOnce(true).mockReturnValueOnce(false);
+      const release = await lease.acquire('abcdefghijk');
+      const move = channelSettingsModule.moveChannelFolder(channel, null, 'Music');
+      try {
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(fs.move).not.toHaveBeenCalled();
+      } finally {
+        await release();
+        await move;
+      }
+      expect(fs.move).toHaveBeenCalled();
+    });
+
     test('should move folder from root to subfolder', async () => {
       fs.existsSync
         .mockReturnValueOnce(true)  // Old folder exists

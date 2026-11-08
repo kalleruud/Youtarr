@@ -196,6 +196,42 @@ Youtarr must be running at the scheduled time; missed occurrences are not replay
 - **Auto-generated captions**: With no uploaded track for a selected language, the auto-generated captions are kept: the video's own when it is spoken in that language, otherwise YouTube's machine translation into it, as before. The original-language auto captions (`en-orig`) are never matched by a bare code; `"en-orig"` is the "English (Original/Uploaded)" option in the UI.
 - **Note**: Only displayed when subtitles are enabled. A value hand-edited into `config.json` that is not a bare language code (such as `"pt-BR"`, yt-dlp's `"all"` alias, an exclusion like `"-live_chat"`, or a yt-dlp regex) is passed to yt-dlp unchanged. Pruning runs only when every entry is a plain language code (`"en"`, `"en-orig"`, `"pt-BR"`) and the custom yt-dlp arguments do not set `--sub-langs`, `--srt-langs` or `--all-subs` (or an abbreviation yt-dlp accepts, such as `--sub-lang`); a code listed verbatim is never pruned.
 
+### Caption Source
+- **Config Key**: `captionSourcePolicy`
+- **Type**: `string` (`"uploaded-then-automatic"` or `"uploaded-only"`)
+- **Default**: `"uploaded-then-automatic"`
+- **Description**: Which captions count as available for a selected language: tracks uploaded by the creator first, then YouTube's automatic (speech recognition) captions; or uploaded tracks only. Downloads still save what yt-dlp fetches. The setting decides what delayed caption checks add and what the video's Captions section reports as missing (`automatic-not-allowed`).
+
+### Allow Machine-Translated Captions
+- **Config Key**: `captionAllowTranslated`
+- **Type**: `boolean`
+- **Default**: `false`
+- **Description**: When a selected language has neither an uploaded nor an automatic track, use YouTube's machine translation into it (a track whose YouTube URL carries a translation target). Off, such a language is reported as `translation-only`. This is YouTube's translation; Youtarr does not translate captions itself.
+
+### Preferred Regional Caption Variants
+- **Config Key**: `captionPreferredVariants`
+- **Type**: `string` (comma-separated language codes, max 200 characters)
+- **Default**: `""`
+- **Description**: Order among several uploaded variants of one language, such as `"en-GB, nb"`. Every uploaded variant is kept; this only decides which one is listed as preferred. A selected `no` (Norwegian) also matches tracks YouTube publishes as `nb` (Bokmål) and the reverse; `nn` (Nynorsk) is a separate language and must be selected on its own. The same equivalence applies to the yt-dlp subtitle request.
+
+### Delayed Caption Checks
+- **Config Key**: `captionEnrichmentEnabled`
+- **Type**: `boolean`
+- **Default**: `false`
+- **Description**: When a download is missing a selected language (common right after a livestream, whose captions YouTube adds hours later), Youtarr schedules checks that ask YouTube for metadata and captions only, never the video, and adds the captions next to the existing file. For a broadcast, a language covered only by automatic captions keeps being checked for uploaded ones, which then replace the automatic track. Checks never touch the media file, the download archive (`complete.list`), the Videos row or the cached `.info.json`. They run one at a time, not while a download is running, at most 5 per 5-minute pass, and pause for an hour when YouTube throttles (no attempt is counted). Captions are added only when the stored video has the YouTube source's length (within 1 second): a video cut by SponsorBlock removal is reported as blocked rather than given out-of-sync captions. A protected track (Protect in the video's Captions section) is never replaced, and a check scheduled for one media file never writes to a newer download of the video. Replaced and retired tracks are kept under `<jobs>/caption-originals`. Custom yt-dlp arguments are not applied to these requests.
+
+### Delayed Caption Check Schedule
+- **Config Key**: `captionEnrichmentRetrySchedule`
+- **Type**: `string`
+- **Default**: `"1h,24h,7d"`
+- **Description**: When to check, as offsets from the download (`m`, `h` or `d`, increasing, 5 minutes to 90 days, at most 10). One check at each offset; after the last, the check stops with the reason shown in the video's Captions section, where "Check again" allows one more. Overdue checks keep the schedule's spacing after the previous check. A value that cannot be parsed is rejected on save and replaced by the default at runtime.
+
+### Delayed Caption Check Spacing
+- **Config Key**: `captionEnrichmentMinIntervalSeconds`
+- **Type**: `number` (10-3600)
+- **Default**: `60`
+- **Description**: Minimum number of seconds between two caption requests to YouTube.
+
 ### Dark Mode
 - **Config Key**: `darkModeEnabled`
 - **Type**: `boolean`
